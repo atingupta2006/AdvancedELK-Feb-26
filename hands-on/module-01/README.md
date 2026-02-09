@@ -1,4 +1,7 @@
-# Module 01 – ELK Fast-Track Foundations (Hands-On Labs)
+# Module 01 – ELK Fast-Track Foundations
+
+> **Stack Version**: Elasticsearch & Kibana 9.x  
+> **Prerequisite**: Complete [Module 00](../module-00/README.md) first
 
 ---
 
@@ -12,45 +15,36 @@
 sudo systemctl status elasticsearch
 ```
 
-2. Start Elasticsearch if not running
-
-```bash
-sudo systemctl start elasticsearch
-```
-
-3. Check Kibana service
+2. Check Kibana service
 
 ```bash
 sudo systemctl status kibana
 ```
 
-4. Start Kibana if not running
-
-```bash
-sudo systemctl start kibana
-```
-
-5. Open browser
+3. Access Kibana UI
 
 ```
 http://localhost:5601
 ```
 
-6. Login to Kibana if prompted
+> **Note**: If Kibana not ready, wait 1-2 minutes and refresh
 
-7. Open Kibana Dev Tools
+4. Open Dev Tools
 
 ```
-Kibana → Dev Tools
+Click Menu (☰) at top-left
+Go to: Management → Dev Tools
 ```
 
-8. Run cluster health request
+5. Verify cluster health
 
 ```json
 GET _cluster/health
 ```
 
-**Success**: Status shows `"green"`
+> **Expected**: Response shows `"status": "green"` or `"status": "yellow"`
+
+**Success**: Cluster status shows `green` or `yellow`
 
 ---
 
@@ -61,89 +55,54 @@ GET _cluster/health
 1. Open Discover
 
 ```
-Kibana → Discover
+Click Menu (☰) at top-left
+Go to: Analytics → Discover
 ```
 
-2. Return to home
+2. Open Visualize Library
 
 ```
-Kibana logo (top left)
+Menu (☰) → Analytics → Visualize Library
 ```
 
-3. Open Visualize Library
+3. Open Dashboard
 
 ```
-Kibana → Visualize Library
+Menu (☰) → Analytics → Dashboard
 ```
 
-4. Return to home
+4. Open Stack Management
 
 ```
-Kibana logo
+Menu (☰) → Management → Stack Management
 ```
 
-5. Open Dashboard
+5. Return to Dev Tools
 
 ```
-Kibana → Dashboard
+Menu (☰) → Management → Dev Tools
 ```
 
-6. Return to home
-
-```
-Kibana logo
-```
-
-7. Open Stack Management
-
-```
-Kibana → Stack Management
-```
-
-8. Open Index Management
-
-```
-Stack Management → Index Management
-```
-
-9. Return to home
-
-```
-Kibana logo
-```
-
-10. Open Dev Tools
-
-```
-Kibana → Dev Tools
-```
-
-**Success**: All sections open successfully
+**Success**: All sections accessible
 
 ---
 
 ## Lab 3 – Index First Document
 
-**Objective**: Create index and add document using Kibana Dev Tools
+**Objective**: Create index and add document using Dev Tools
 
-1. Open Dev Tools
-
-```
-Kibana → Dev Tools
-```
-
-2. Create index
+1. Create index
 
 ```json
 PUT app-logs
 ```
 
-3. Index first document
+2. Index document
 
 ```json
 POST app-logs/_doc
 {
-  "timestamp": "2024-01-01T12:00:00Z",
+  "timestamp": "2026-02-09T12:00:00Z",
   "level": "INFO",
   "service": "auth-service",
   "message": "User login successful",
@@ -151,12 +110,12 @@ POST app-logs/_doc
 }
 ```
 
-4. Index second document
+3. Index second document
 
 ```json
 POST app-logs/_doc
 {
-  "timestamp": "2024-01-01T12:00:01Z",
+  "timestamp": "2026-02-09T12:00:01Z",
   "level": "ERROR",
   "service": "payment-service",
   "message": "Payment processing failed",
@@ -164,32 +123,35 @@ POST app-logs/_doc
 }
 ```
 
-5. Retrieve documents
+4. Search documents
 
 ```json
 GET app-logs/_search
+> **Expected**: Returns 2 documents
+
+```
+
+5. Create data view
+
+```
+Click Menu (☰) at top-left
+Go to: Management → Stack Management
+Click: Kibana → Data Views
+Click: Create data view
+
+Fill in:
+  Name: app-logs
+  Index pattern: app-logs*
+  Timestamp field: timestamp
+  
+Click: Save data view to Kibana
 ```
 
 6. Open Discover
 
 ```
-Kibana → Discover
-```
-
-7. Create data view
-
-```
-Create data view
-Name: app-logs
-Index pattern: app-logs*
-Timestamp field: timestamp
-Save
-```
-
-8. Select data view
-
-```
-Data view dropdown → app-logs
+Menu (☰) → Analytics → Discover
+Select data view dropdown: app-logs
 ```
 
 **Success**: Documents visible in Discover
@@ -200,74 +162,69 @@ Data view dropdown → app-logs
 
 **Objective**: Perform basic searches in Kibana Discover
 
-1. Open Discover
+1. Open Discover with app-logs data view
 
 ```
-Kibana → Discover
+Menu (☰) → Analytics → Discover
+Data view dropdown: Select app-logs
 ```
 
-2. Select data view
+2. Set time range
 
 ```
-app-logs
+Click time picker (top-right)
+Select: Last 24 hours
+Or select: Last 7 days (if documents not showing)
 ```
 
-3. Set time range
-
-```
-Time picker → Last 24 hours
-```
-
-4. Search ERROR logs
+3. Search ERROR logs
 
 ```
 level : "ERROR"
 ```
 
-5. Search by service
+> **Expected**: Shows only ERROR level documents
+
+4. Search by service
 
 ```
-service : "auth-service"
+service : "payment-service"
 ```
 
-6. Search by text
+5. Search message text
 
 ```
 message : "failed"
 ```
 
-7. Add filter
+6. Add filter
 
 ```
-Add filter
+Click: + Add filter (below search bar)
 Field: level
 Operator: is
 Value: ERROR
-Save
+Click: Save
 ```
 
-8. Remove filter
+7. Add table column
 
 ```
-Filter bar → Delete filter
+Left sidebar: Available fields
+Find: service
+Click: + button next to service
 ```
 
-9. Add column
+8. Expand document
 
 ```
-Field list → service → Add to table
+Click arrow on document row
 ```
 
-10. Expand a document
-
-```
-Click arrow on left side of row
-```
-
-11. View JSON
+9. View JSON
 
 ```
 JSON tab
 ```
 
-**Success**: Can search, filter, and view documents
+**Success**: Can search, filter, and view document details

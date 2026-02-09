@@ -1,8 +1,60 @@
 # Advanced ELK – Production Observability, Analytics & Security
 
-**Duration:** 52 hours
+**Duration:** 52 hours  
+**Stack Version:** Elasticsearch & Kibana 9.x | Logstash 9.x | Beats 9.x  
+**Platform:** CentOS Stream 9
+
+---
+
+## 🚀 Getting Started (Students)
+
+**For CentOS Stream 9 environments:**
+
+1. **Start here:** [Module 00 - Environment Setup](hands-on/module-00/README.md)
+   - Step-by-step manual installation of Elasticsearch, Kibana, Logstash, Filebeat
+   - System configuration and troubleshooting
+   - Environment validation
+
+2. **Then proceed to:**
+   - [Module 01 - ELK Foundations Labs](hands-on/module-01/README.md)
+   - [Module 02 - Data Ingestion Labs](hands-on/module-02/README.md)
+   - [Module 03 - Querying & Analysis Labs](hands-on/module-03/README.md)
+
+**Quick commands:**
+```bash
+# Clone this repository
+git clone <repo-url>
+cd GH
+
+# Start with Module 00
+cd hands-on/module-00
+# Follow the README step-by-step
+```
+
+---
+
+## 📁 Repository Structure
+
+```
+GH/
+├── hands-on/                    # Student labs (start here!)
+│   ├── module-00/              # Environment setup (REQUIRED FIRST)
+│   ├── module-01/              # ELK foundations
+│   ├── module-02/              # Data ingestion & indexing
+│   ├── module-03/              # Querying & analysis
+│   └── module-04-11/           # Advanced modules
+├── instructor-prep/             # Instructor materials
+├── scripts/                     # Automation scripts
+│   ├── bootstrap-centos9.sh   # Optional automated install
+│   └── validate.sh            # Environment validation
+├── data/raw/                    # Sample data files
+└── docs/                        # Documentation
+```
+
+---
 
 ## Course Overview
+
 This course provides a comprehensive, hands-on journey through the ELK (Elasticsearch, Logstash, Kibana) stack, focusing on production-grade observability, analytics, and security. It covers foundational concepts, advanced engineering, and real-world operational practices, culminating in a capstone project.
 
 **Note:** Existing course content is preserved. This version embeds three clearly branded **Agentic AI Use Cases** at logical points in the curriculum without removing or replacing any existing topics.
@@ -10,6 +62,13 @@ This course provides a comprehensive, hands-on journey through the ELK (Elastics
 ---
 
 ## Course Outline
+
+### Module 00: Environment Setup (CentOS Stream 9)
+**NEW - Start here!**
+- Manual step-by-step installation
+- System configuration
+- Service management
+- Troubleshooting guide
 
 ### 1. ELK Fast-Track Foundations
 A rapid alignment module to establish common ground before diving into advanced and production-grade topics.
