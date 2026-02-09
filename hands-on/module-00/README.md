@@ -9,35 +9,58 @@
 
 ## Setup
 
-```bash
-# Install tools
-sudo dnf install -y curl wget jq
-# (curl/wget for downloads, jq for JSON parsing)
-
-# System config
-if ! grep -q "vm.max_map_count=262144" /etc/sysctl.conf; then
-  echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf
-fi
-sudo sysctl -p
-sudo systemctl stop firewalld
-sudo systemctl disable firewalld
-# (disable firewall for training network simplicity)
-
-# Add Elastic repo
-sudo rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch
-
-Edit the repo file with nano (only use nano). Overwrite the file (do not append).
-
-Backup existing file, open nano, replace contents, save:
+### 1) Install tools
 
 ```bash
-sudo cp /etc/yum.repos.d/elasticsearch.repo /etc/yum.repos.d/elasticsearch.repo.bak || true
-sudo nano /etc/yum.repos.d/elasticsearch.repo
+sudo dnf update -y 
+sudo dnf install -y curl wget jq ctop vim
 ```
 
-Replace the file contents with the block below and save.
+### 2) System config
+
+Edit `/etc/sysctl.conf` and ensure this line exists:
 
 ```text
+vm.max_map_count=262144
+```
+
+Commands:
+
+```bash
+sudo vim /etc/sysctl.conf
+```
+
+```bash
+sudo sysctl -p
+```
+
+```bash
+sudo systemctl stop firewalld
+```
+
+```bash
+sudo systemctl disable firewalld
+```
+
+### 3) Add Elastic repo
+
+```bash
+sudo rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch
+```
+
+Backup + overwrite repo file (do not append):
+
+```bash
+sudo cp /etc/yum.repos.d/elasticsearch.repo /etc/yum.repos.d/elasticsearch.repo.bak 2>/dev/null || true
+```
+
+```bash
+sudo vim /etc/yum.repos.d/elasticsearch.repo
+```
+
+Paste exactly:
+
+```ini
 [elasticsearch]
 name=Elasticsearch repository for 9.x packages
 baseurl=https://artifacts.elastic.co/packages/9.x/yum
@@ -47,45 +70,46 @@ enabled=1
 type=rpm-md
 ```
 
-# Install everything
-sudo dnf install -y elasticsearch kibana logstash filebeat
-# (installs the Elastic Stack packages)
-
-# Configure Elasticsearch
-
-Edit the Elasticsearch config with nano (only use nano). Overwrite the file (do not append).
-
-Backup existing file, open nano, replace contents, save:
+### 4) Install Elastic Stack packages
 
 ```bash
-sudo cp /etc/elasticsearch/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml.bak || true
-sudo nano /etc/elasticsearch/elasticsearch.yml
+sudo dnf install -y elasticsearch kibana logstash filebeat
 ```
 
-Replace the file contents with the block below and save (disables security for training):
+### 5) Configure Elasticsearch (disable security for training)
+
+```bash
+sudo cp /etc/elasticsearch/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml.bak 2>/dev/null || true
+```
+
+```bash
+sudo vim /etc/elasticsearch/elasticsearch.yml
+```
+
+Replace the file content with:
 
 ```yaml
 cluster.name: elk-training
 node.name: node-1
 network.host: 0.0.0.0
+discovery.type: single-node
 xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
 xpack.security.http.ssl.enabled: false
 xpack.security.transport.ssl.enabled: false
-xpack.security.enrollment.enabled: false
 ```
 
-# Configure Kibana
-
-Edit the Kibana config with nano (only use nano). Overwrite the file (do not append).
-
-Backup existing file, open nano, replace contents, save:
+### 6) Configure Kibana
 
 ```bash
-sudo cp /etc/kibana/kibana.yml /etc/kibana/kibana.yml.bak || true
-sudo nano /etc/kibana/kibana.yml
+sudo cp /etc/kibana/kibana.yml /etc/kibana/kibana.yml.bak 2>/dev/null || true
 ```
 
-Replace the file contents with the block below and save (points Kibana at local ES):
+```bash
+sudo vim /etc/kibana/kibana.yml
+```
+
+Replace the file content with:
 
 ```yaml
 server.port: 5601
@@ -93,19 +117,33 @@ server.host: "0.0.0.0"
 elasticsearch.hosts: ["http://localhost:9200"]
 ```
 
-# Start services
+### 7) Start services
+
+```bash
 sudo systemctl daemon-reload
+```
+
+```bash
 sudo systemctl enable elasticsearch kibana
+```
+
+```bash
 sudo systemctl start elasticsearch kibana
+```
 
-# Wait for services to start
+```bash
 sleep 60
+```
 
-# Verify Elasticsearch
+```bash
 curl http://localhost:9200
+```
 
-# Check service status
+```bash
 sudo systemctl status elasticsearch --no-pager
+```
+
+```bash
 sudo systemctl status kibana --no-pager
 ```
 
@@ -113,10 +151,10 @@ sudo systemctl status kibana --no-pager
 
 ## Editor (editing system files)
 
-Only use `nano` to edit system files in this training. Example:
+Only use `vim` to edit system files in this training. Example:
 
 ```bash
-sudo nano /etc/elasticsearch/elasticsearch.yml
+sudo vim /etc/elasticsearch/elasticsearch.yml
 ```
 
 Do not use `vim` or run the VS Code GUI as root.
