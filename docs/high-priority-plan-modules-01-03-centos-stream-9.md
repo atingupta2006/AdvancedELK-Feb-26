@@ -20,7 +20,7 @@ All planned improvements have been implemented:
 ### ✅ Scripts Created
 - `scripts/bootstrap-centos9.sh` - Automated bootstrap (optional, kept as reference)
 - `scripts/validate.sh` - Environment validation script
-- `hands-on/module-02/run.sh` - Automated Module 02 setup
+- (Removed) Automated Module 02 setup script — students follow the Module 02 README labs.
 
 ### ✅ Sample Data Added
 - `data/raw/access.log` - 30 web server access logs
@@ -49,7 +49,7 @@ All planned improvements have been implemented:
 hands-on/module-00/README.md
 scripts/bootstrap-centos9.sh
 scripts/validate.sh
-hands-on/module-02/run.sh
+(Removed) hands-on/module-02/run.sh
 hands-on/module-02/filebeat.yml
 hands-on/module-02/logstash.conf
 hands-on/module-02/ingest-pipeline.json
@@ -149,13 +149,13 @@ commands.sh → commands.bat (renamed)
   - Ingest pipeline JSON: `GH/hands-on/module-02/ingest-pipeline.json`
   - Templates / component templates / index templates if needed
 
-- Add `GH/hands-on/module-02/run.sh`:
+- (Removed) Add an automated `run.sh` for Module 02.
   - Load pipeline/templates
   - Start shipper / run Logstash
   - Validate data arrived with `_count` and a sample `_search`
 
 **Acceptance criteria (Module 02)**
-- Running `run.sh` results in a known index or data stream with an expected minimum document count (e.g., N ≥ 100).
+- Validation is done by following the Module 02 README labs and verifying in Kibana Discover.
 - Required fields exist for Module 03 queries.
 
 ---

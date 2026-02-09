@@ -12,13 +12,13 @@
 1. Check Elasticsearch service
 
 ```bash
-sudo systemctl status elasticsearch
+sudo systemctl status elasticsearch --no-pager
 ```
 
 2. Check Kibana service
 
 ```bash
-sudo systemctl status kibana
+sudo systemctl status kibana --no-pager
 ```
 
 3. Access Kibana UI
@@ -27,13 +27,18 @@ sudo systemctl status kibana
 http://localhost:5601
 ```
 
+If you are accessing the VM from your laptop, use:
+
+```
+http://<VM-IP>:5601
+```
+
 > **Note**: If Kibana not ready, wait 1-2 minutes and refresh
 
 4. Open Dev Tools
 
 ```
-Click Menu (☰) at top-left
-Go to: Management → Dev Tools
+Menu (☰) → Management → Dev Tools
 ```
 
 5. Verify cluster health
@@ -55,8 +60,7 @@ GET _cluster/health
 1. Open Discover
 
 ```
-Click Menu (☰) at top-left
-Go to: Analytics → Discover
+Menu (☰) → Analytics → Discover
 ```
 
 2. Open Visualize Library
@@ -91,10 +95,23 @@ Menu (☰) → Management → Dev Tools
 
 **Objective**: Create index and add document using Dev Tools
 
-1. Create index
+0. (Optional) Reset from a previous run (only if you already created `app-logs` before)
+
+```json
+DELETE app-logs
+```
+
+1. Create index (make `timestamp` a date field)
 
 ```json
 PUT app-logs
+{
+  "mappings": {
+    "properties": {
+      "timestamp": { "type": "date" }
+    }
+  }
+}
 ```
 
 2. Index document
@@ -123,31 +140,36 @@ POST app-logs/_doc
 }
 ```
 
-4. Search documents
+4. Refresh index (so search shows documents immediately)
+
+```json
+POST app-logs/_refresh
+```
+
+5. Search documents
 
 ```json
 GET app-logs/_search
+```
+
 > **Expected**: Returns 2 documents
 
-```
-
-5. Create data view
+6. Create data view
 
 ```
-Click Menu (☰) at top-left
-Go to: Management → Stack Management
+Menu (☰) → Management → Stack Management
 Click: Kibana → Data Views
 Click: Create data view
 
 Fill in:
   Name: app-logs
-  Index pattern: app-logs*
+  Index pattern: app-logs
   Timestamp field: timestamp
   
 Click: Save data view to Kibana
 ```
 
-6. Open Discover
+7. Open Discover
 
 ```
 Menu (☰) → Analytics → Discover

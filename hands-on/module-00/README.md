@@ -13,7 +13,7 @@
 
 ```bash
 sudo dnf update -y 
-sudo dnf install -y curl wget jq ctop vim
+sudo dnf install -y curl wget jq htop vim
 ```
 
 ### 2) System config
@@ -97,6 +97,12 @@ xpack.security.enabled: false
 xpack.security.enrollment.enabled: false
 xpack.security.http.ssl.enabled: false
 xpack.security.transport.ssl.enabled: false
+```
+
+Important: if you see this line in the file, DELETE it (it can block startup in this training setup):
+
+```text
+cluster.initial_master_nodes: ...
 ```
 
 ### 6) Configure Kibana
