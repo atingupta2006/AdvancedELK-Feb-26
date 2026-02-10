@@ -9,17 +9,23 @@
 
 **Objective**: Confirm Elasticsearch and Kibana are running
 
+> Elasticsearch and Kibana run as systemd services on CentOS. Verifying both services are active is the first step before any hands-on work.
+
 1. Check Elasticsearch service
 
 ```bash
 sudo systemctl status elasticsearch --no-pager
 ```
 
+> Look for `Active: active (running)`. This confirms the JVM started and the node is listening on port 9200.
+
 2. Check Kibana service
 
 ```bash
 sudo systemctl status kibana --no-pager
 ```
+
+> Kibana connects to Elasticsearch on startup. If Elasticsearch is healthy, Kibana should also show `active (running)`.
 
 3. Access Kibana UI
 
@@ -37,6 +43,8 @@ http://<VM-IP>:5601
 
 4. Open Dev Tools
 
+> Dev Tools is Kibana's built-in REST API console. It lets you run Elasticsearch queries directly from the browser without curl.
+
 ```
 Menu (☰) → Management → Dev Tools
 ```
@@ -47,7 +55,7 @@ Menu (☰) → Management → Dev Tools
 GET _cluster/health
 ```
 
-> **Expected**: Response shows `"status": "green"` or `"status": "yellow"`
+> `_cluster/health` returns the overall cluster state. `green` means all primary and replica shards are allocated. `yellow` means replicas are unassigned (normal for single-node setups).
 
 **Success**: Cluster status shows `green` or `yellow`
 
@@ -57,13 +65,19 @@ GET _cluster/health
 
 **Objective**: Navigate main Kibana UI areas
 
+> Kibana organizes features into sections: **Analytics** (Discover, Visualize, Dashboard) for data exploration, and **Management** (Stack Management, Dev Tools) for administration.
+
 1. Open Discover
+
+> Discover is where you search and filter indexed data using KQL or ES|QL.
 
 ```
 Menu (☰) → Analytics → Discover
 ```
 
 2. Open Visualize Library
+
+> Visualize Library stores saved charts (bar, line, pie, etc.) that can be reused across dashboards.
 
 ```
 Menu (☰) → Analytics → Visualize Library
@@ -76,6 +90,8 @@ Menu (☰) → Analytics → Dashboard
 ```
 
 4. Open Stack Management
+
+> Stack Management is the admin hub — index management, data views, connectors, and security settings live here.
 
 ```
 Menu (☰) → Management → Stack Management
@@ -95,6 +111,8 @@ Menu (☰) → Management → Dev Tools
 
 **Objective**: Create index and add document using Dev Tools
 
+> An **index** in Elasticsearch is like a database table. It holds documents (JSON objects) and defines how fields are stored and searched through **mappings**.
+
 0. (Optional) Reset from a previous run (only if you already created `app-logs` before)
 
 ```json
@@ -102,6 +120,8 @@ DELETE app-logs
 ```
 
 1. Create index (make `timestamp` a date field)
+
+> `PUT` creates a new index. Defining `timestamp` as type `date` enables time-based filtering and sorting in Discover.
 
 ```json
 PUT app-logs
@@ -116,6 +136,8 @@ PUT app-logs
 
 2. Index document
 
+> `POST index/_doc` adds a document. Elasticsearch auto-generates a unique `_id` for each document.
+
 ```json
 POST app-logs/_doc
 {
@@ -123,7 +145,7 @@ POST app-logs/_doc
   "level": "INFO",
   "service": "auth-service",
   "message": "User login successful",
-  "user_id": "12345"
+  "user_id": "user_12345"
 }
 ```
 
@@ -142,6 +164,8 @@ POST app-logs/_doc
 
 4. Refresh index (so search shows documents immediately)
 
+> By default, Elasticsearch refreshes every 1 second. `_refresh` forces an immediate refresh so newly indexed documents appear in search results right away.
+
 ```json
 POST app-logs/_refresh
 ```
@@ -155,6 +179,8 @@ GET app-logs/_search
 > **Expected**: Returns 2 documents
 
 6. Create data view
+
+> A **data view** (formerly index pattern) tells Kibana which Elasticsearch indices to query and which field to use as the timestamp for time-based filtering.
 
 ```
 Menu (☰) → Management → Stack Management
@@ -184,6 +210,8 @@ Select data view dropdown: app-logs
 
 **Objective**: Perform basic searches in Kibana Discover
 
+> **KQL** (Kibana Query Language) is the default search syntax in Discover. It supports field-based filtering, wildcards, and boolean operators.
+
 1. Open Discover with app-logs data view
 
 ```
@@ -193,6 +221,8 @@ Data view dropdown: Select app-logs
 
 2. Set time range
 
+> The time picker controls which documents are visible. Documents outside the selected range are excluded from results.
+
 ```
 Click time picker (top-right)
 Select: Last 24 hours
@@ -200,6 +230,8 @@ Or select: Last 7 days (if documents not showing)
 ```
 
 3. Search ERROR logs
+
+> KQL syntax: `field : "value"` filters documents where the field exactly matches the value.
 
 ```
 level : "ERROR"
@@ -215,11 +247,15 @@ service : "payment-service"
 
 5. Search message text
 
+> For `text` fields, KQL performs a full-text search — it matches on individual tokens, so `"failed"` matches `"Payment processing failed"`.
+
 ```
 message : "failed"
 ```
 
 6. Add filter
+
+> Filters added via the UI persist across searches and can be toggled on/off without modifying the KQL query bar.
 
 ```
 Click: + Add filter (below search bar)
@@ -230,6 +266,8 @@ Click: Save
 ```
 
 7. Add table column
+
+> By default, Discover shows the `_source` field. Adding specific columns makes the table easier to scan.
 
 ```
 Left sidebar: Available fields
@@ -244,6 +282,8 @@ Click arrow on document row
 ```
 
 9. View JSON
+
+> The JSON tab shows the raw `_source` document exactly as stored in Elasticsearch.
 
 ```
 JSON tab
