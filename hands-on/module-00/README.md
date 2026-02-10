@@ -16,6 +16,8 @@ sudo dnf update -y
 sudo dnf install -y curl wget jq htop vim
 ```
 
+Explanation: update package metadata and install common utilities used during the labs (network tools, JSON parser, system monitor, editor).
+
 ### 2) System config
 
 Edit `/etc/sysctl.conf` and ensure this line exists:
@@ -34,6 +36,8 @@ sudo vim /etc/sysctl.conf
 sudo sysctl -p
 ```
 
+Explanation: `sysctl -p` reloads kernel settings so `vm.max_map_count` takes effect for Elasticsearch.
+
 ```bash
 sudo systemctl stop firewalld
 ```
@@ -41,6 +45,8 @@ sudo systemctl stop firewalld
 ```bash
 sudo systemctl disable firewalld
 ```
+
+Explanation: stopping the firewall removes a common connectivity barrier in the training environment so services can communicate locally.
 
 ### 3) Add Elastic repo
 
@@ -70,11 +76,15 @@ enabled=1
 type=rpm-md
 ```
 
+Explanation: importing the GPG key and adding the repo ensures `dnf` installs official Elastic packages and verifies their integrity.
+
 ### 4) Install Elastic Stack packages
 
 ```bash
 sudo dnf install -y elasticsearch kibana logstash filebeat
 ```
+
+Explanation: installs the core Elastic components used in labs: Elasticsearch (data), Kibana (UI), Logstash (ingest), Filebeat (lightweight shipper).
 
 ### 5) Configure Elasticsearch (disable security for training)
 
@@ -98,6 +108,8 @@ xpack.security.enrollment.enabled: false
 xpack.security.http.ssl.enabled: false
 xpack.security.transport.ssl.enabled: false
 ```
+
+Explanation: `network.host: 0.0.0.0` binds to all interfaces for accessibility in the lab; `single-node` simplifies cluster formation; security is disabled for early labs to remove auth complexity.
 
 Important: if you see this line in the file, DELETE it (it can block startup in this training setup):
 
@@ -123,27 +135,39 @@ server.host: "0.0.0.0"
 elasticsearch.hosts: ["http://localhost:9200"]
 ```
 
+Explanation: configuring Kibana to listen on all interfaces and connect to the local Elasticsearch instance.
+
 ### 7) Start services
 
 ```bash
 sudo systemctl daemon-reload
 ```
 
+Explanation: reload systemd to pick up any new or changed unit files.
+
 ```bash
 sudo systemctl enable elasticsearch kibana
 ```
+
+Explanation: enable configures services to start automatically on boot.
 
 ```bash
 sudo systemctl start elasticsearch kibana
 ```
 
+Explanation: starts Elasticsearch and Kibana so the stack is running for the labs.
+
 ```bash
 sleep 60
 ```
 
+Explanation: wait briefly to allow services to finish starting before checking health.
+
 ```bash
 curl http://localhost:9200
 ```
+
+Explanation: a quick health check — Elasticsearch responds with cluster info when running.
 
 ```bash
 sudo systemctl status elasticsearch --no-pager
@@ -152,6 +176,8 @@ sudo systemctl status elasticsearch --no-pager
 ```bash
 sudo systemctl status kibana --no-pager
 ```
+
+Explanation: view service status and recent logs to confirm successful start.
 
 ---
 
@@ -163,7 +189,7 @@ Only use `vim` to edit system files in this training. Example:
 sudo vim /etc/elasticsearch/elasticsearch.yml
 ```
 
-Do not use `vim` or run the VS Code GUI as root.
+Editor note: use `vim` for system file edits as shown; avoid running graphical editors as root to reduce accidental permission changes.
 
 **Success**: Elasticsearch returns JSON cluster info
 
