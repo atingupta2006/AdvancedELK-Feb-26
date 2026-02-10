@@ -26,6 +26,8 @@ Edit `/etc/sysctl.conf` and ensure this line exists:
 vm.max_map_count=262144
 ```
 
+Explanation: sets the kernel limit for the maximum number of memory map areas a process may have; Elasticsearch/Lucene uses many mmap regions, and 262144 avoids "unable to mmap" errors on larger workloads.
+
 Commands:
 
 ```bash
