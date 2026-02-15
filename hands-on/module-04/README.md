@@ -60,13 +60,14 @@ Kibana "Lens" hides the complexity, but you must understand what is happening un
    *   **Save As**: `Web - Traffic Trend`.
 
 3. **Chart B: Top Patterns (Bar Chart)**
-   *   *Question*: "Which URLs are getting hit the most?"
-   *   **Horizontal axis** (X): Drag `client_ip` field.
-       *   *Note*: If `client_ip` is `IP` type, Kibana puts it on the Y-axis. Move it to Horizontal.
-       *   *Correction*: Let's use `method` (GET/POST) if `path` is too high cardinality, or `response` code.
-       *   *Action*: Drag `status` (or `http.response.status_code`) to the workspace.
-       *   *Breakdown*: Drag `method` to the "Breakdown by" field.
-   *   **Visualization Type**: Stacked Bar.
+   *   *Question*: "Which HTTP methods are most common?"
+   *   **Horizontal axis** (X): Drag `client_ip` to the workspace.
+       *   *Note*: Lens might auto-select "Date Histogram". Change it to "Top values" if needed.
+   *   **Refinement**: `client_ip` is too random. Let's look at Status Codes instead.
+       *   **Remove** `client_ip`.
+       *   **Drag** `status` field to the Horizontal axis.
+   *   **Breakdown by**: Drag `method.keyword` to the "Breakdown by" field (right side).
+   *   **Visualization Type**: Ensure it is set to **Stacked Bar**.
    *   **Save As**: `Web - Status Codes by Method`.
 
 4. **Chart C: Response Distribution (Pie Chart)**
@@ -100,9 +101,10 @@ Kibana "Lens" hides the complexity, but you must understand what is happening un
    *   **Cell value**: `Records` (Count).
 
 3. **Refine the Logic**
-   *   It likely shows green/blue. Let's make errors "Red".
-   *   Click on **Cell value** configuration.
-   *   Change color palette to "Temperature" or "Red-Yellow-Green" (inverted).
+   *   **Configure**: In the right panel, find "Cell value" (Records).
+   *   Click on the **Color palette** dropdown (it likely shows blue gradient).
+   *   Select **"Temperature"** (Blue to Red) or **"Red-Yellow-Green"** (and click "Invert" if needed so Red is high).
+   *   *Why*: We want high error counts (hotspots) to look alarming (Red), not calm (Blue).
 
 4. **Save As**: `Web - Heatmap Status over Time`.
 
@@ -155,11 +157,14 @@ Kibana "Lens" hides the complexity, but you must understand what is happening un
    *   *Action*: Remove the filter to reset.
 
 2. **Add Input Controls (The "Slicer")**
+   *   These are dropdown menus that sit at the top of the dashboard.
    *   Click **Edit** on the dashboard.
-   *   Click **Controls** (Top menu bar).
+   *   Click **Controls** (Top menu bar, near "Cancel/Save").
    *   **Add control** -> **Options list**.
-   *   **Field**: `client_ip` (or `geoip.country_name.keyword` if enriched).
+   *   **Field**: `method.keyword` (or `client_ip` for per-client filtering).
    *   Click **Add**.
+   *   *Test*: Select "POST". Watch every chart update to show only "POST" traffic.
+   *   Click to close the control panel.
 
 3. **Configure Time Range**
    *   By default, it might be "Last 15 minutes".
