@@ -6,18 +6,6 @@ Prereq: Module 02 completed. These indices must exist:
 - `web-logs-*`
 - `app-logs-*`
 
-**Essential Reading**: Before starting Lab 3 (Query DSL), review [DATA_TYPES_AND_SCHEMA.md](DATA_TYPES_AND_SCHEMA.md) for a deep dive into how data types impact your search results and performance.
-
----
-
-## 🛠 Troubleshooting: Terminal Health Check
-If you run commands in your terminal and see **no output** (even for `echo` or `ls`), your shell output might have been accidentally redirected. 
-**Run this fix before starting:**
-```bash
-exec 1>/dev/tty
-```
-Verify with: `echo "Output Fixed"`
-
 ---
 
 ## Lab 1: KQL Basics in Discover
@@ -204,20 +192,20 @@ GET web-logs-*/_search
 
 ---
 
-## Lab 4: Bool Queries
-**Objective**: Build complex bool queries
+## Lab 4: The Logic of "Bool" Queries
+**Objective**: Combine multiple questions into one complex query
 
-> A **bool query** combines multiple clauses:
-> *   `must`: The clause **must** appear in matching documents and **will contribute to the score** (AND).
-> *   `filter`: The clause **must** appear in matching documents. However, the score of the query is ignored and **results are cached** (AND, but faster).
-> *   `should`: The clause **should** appear in matching documents. If no `must` or `filter` is present, at least one `should` must match (OR).
-> *   `must_not`: The clause **must not** appear in matching documents (NOT, also cached).
-
-1. Dev Tools: Must + Filter
-
-> `must` clauses contribute to the relevance score. `filter` clauses are cached and don't affect score — use them for exact matching on structured fields.
+> **Concept**: Real-world questions are rarely simple. You don't ask "Find errors". You ask "Find **errors** (must) in **production** (filter) from **yesterday** (filter), but **ignore** 404s (must_not), and maybe prioritize **critical** ones (should)."
 >
-> *❓ Why is `method.keyword` in `must` instead of `filter`?* In practice, you'd put it in `filter` (it's an exact match that doesn't need scoring). Here we use `must` to demonstrate both clause types side-by-side. Try moving it to `filter` yourself and notice the `_score` drops to `0.0`.
+> The `bool` query is the container for this logic. It has 4 clauses:
+> 1.  **`must` (AND)**: "It HAS to match, and I care about *how well* it matches (score)." (Use for: Full-text search).
+> 2.  **`filter` (AND)**: "It HAS to match, but I don't care about score." (Use for: Exact IDs, Dates, Status Codes). **Much faster because it is cached.**
+> 3.  **`should` (OR)**: "It's nice if it matches." (Use for: Boosting relevance or "A OR B" logic).
+> 4.  **`must_not` (NOT)**: "It must NOT match." (Use for: Exclusion).
+
+1. **Scenario A: "The Specific Search" (Must + Filter)**
+   *   *Goal*: Find logs where the message contains "login" (text search) AND the status is 200 (exact filter).
+   *   *Why*: We use `must` for "login" because we want to find the word. We use `filter` for "200" because a status is either 200 or it isn't; there is no "partial 200".
 
 ```json
 GET web-logs-*/_search
@@ -225,18 +213,19 @@ GET web-logs-*/_search
   "query": {
     "bool": {
       "must": [
-        { "term": { "method.keyword": "GET" } }
+        { "match": { "message": "login" } }
       ],
       "filter": [
-        { "range": { "status": { "gte": 200, "lt": 300 } } }
+        { "term": { "status": 200 } }
       ]
     }
   }
 }
 ```
-2. Should + minimum_should_match
 
-> `should` clauses are optional by default. Setting `minimum_should_match: 1` requires at least one `should` clause to match.
+2. **Scenario B: "The List Search" (Should)**
+   *   *Goal*: Find logs from EITHER "auth-service" OR "payment-service".
+   *   *Why*: In a `bool` query, if you only have `should` clauses, at least one must match (Logic: A OR B).
 
 ```json
 GET app-logs-*/_search
@@ -247,17 +236,14 @@ GET app-logs-*/_search
         { "term": { "service.keyword": "auth-service" } },
         { "term": { "service.keyword": "payment-service" } }
       ],
-      "minimum_should_match": 1,
-      "filter": [
-        { "term": { "level.keyword": "ERROR" } }
-      ]
+      "minimum_should_match": 1
     }
   }
 }
 ```
-3. Exclude results (must_not)
 
-> `must_not` excludes matching documents entirely. Here we get all 4xx+ errors except 404s.
+3. **Scenario C: "The Noise Filter" (Must Not)**
+   *   *Goal*: Show me all Server Errors (500+), but hide the "Maintenance" events I already know about.
 
 ```json
 GET web-logs-*/_search
@@ -265,16 +251,16 @@ GET web-logs-*/_search
   "query": {
     "bool": {
       "filter": [
-        { "range": { "status": { "gte": 400 } } }
+        { "range": { "status": { "gte": 500 } } }
       ],
       "must_not": [
-        { "term": { "status": 404 } }
+        { "match": { "message": "maintenance" } }
       ]
     }
   }
 }
 ```
-**Success**: Bool queries return expected filtered results
+**Success**: You can express complex business logic (AND, OR, NOT) using JSON structure.
 
 ---
 
