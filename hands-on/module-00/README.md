@@ -13,6 +13,7 @@
 
 ```bash
 sudo dnf update -y 
+sudo dnf install epel-release -y
 sudo dnf install -y curl wget jq htop vim
 ```
 
@@ -31,7 +32,11 @@ Explanation: sets the kernel limit for the maximum number of memory map areas a 
 Commands:
 
 ```bash
-sudo vim /etc/sysctl.conf
+sudo sysctl -w vm.max_map_count=262144
+```
+
+```bash
+grep -q "vm.max_map_count=262144" /etc/sysctl.conf || echo 'vm.max_map_count=262144' | sudo tee -a /etc/sysctl.conf
 ```
 
 ```bash
@@ -83,6 +88,7 @@ Explanation: importing the GPG key and adding the repo ensures `dnf` installs of
 ### 4) Install Elastic Stack packages
 
 ```bash
+sudo dnf makecache
 sudo dnf install -y elasticsearch kibana logstash filebeat
 ```
 
@@ -101,17 +107,29 @@ sudo vim /etc/elasticsearch/elasticsearch.yml
 Replace the file content with:
 
 ```yaml
+# Paths - Essential for RPM installations
+path.data: /var/lib/elasticsearch
+path.logs: /var/log/elasticsearch
+
+# Node Identity
 cluster.name: elk-training
 node.name: node-1
+
+# Network - Use 0.0.0.0 to allow external & local connections
 network.host: 0.0.0.0
+http.port: 9200
+
+# Single Node Mode
 discovery.type: single-node
+
+# Security - The master "off" switch
 xpack.security.enabled: false
 xpack.security.enrollment.enabled: false
 xpack.security.http.ssl.enabled: false
 xpack.security.transport.ssl.enabled: false
 ```
 
-Explanation: `network.host: 0.0.0.0` binds to all interfaces for accessibility in the lab; `single-node` simplifies cluster formation; security is disabled for early labs to remove auth complexity.
+Explanation: `network.host: 0.0.0.0` binds to all interfaces for accessibility in the lab; `single-node` simplifies cluster formation; security is disabled for early labs to remove auth complexity. Explicitly disabling SSL components is required when autoconfiguration has already populated the keystore.
 
 Important: if you see this line in the file, DELETE it (it can block startup in this training setup):
 
@@ -134,12 +152,20 @@ Replace the file content with:
 ```yaml
 server.port: 5601
 server.host: "0.0.0.0"
-elasticsearch.hosts: ["http://localhost:9200"]
+elasticsearch.hosts: ["http://127.0.0.1:9200"]
 ```
 
 Explanation: configuring Kibana to listen on all interfaces and connect to the local Elasticsearch instance.
 
 ### 7) Start services
+
+##### Run this before starting the service:
+```bash
+sudo chown -R elasticsearch:elasticsearch /var/lib/elasticsearch
+sudo chown -R elasticsearch:elasticsearch /var/log/elasticsearch
+sudo chmod -R 775 /var/lib/elasticsearch
+sudo chmod -R 775 /var/log/elasticsearch
+```
 
 ```bash
 sudo systemctl daemon-reload
@@ -157,6 +183,21 @@ Explanation: enable configures services to start automatically on boot.
 sudo systemctl start elasticsearch kibana
 ```
 
+```bash
+# 1. Check if the directories actually exist
+ls -ld /var/lib/elasticsearch /var/log/elasticsearch
+```
+
+```bash
+# 2. Check the end of the log file directly
+sudo tail -n 50 /var/log/elasticsearch/elk-training.log
+```
+
+```bash
+# 3. Check systemd detailed errors
+sudo journalctl -u elasticsearch -n 50 --no-pager
+```
+
 Explanation: starts Elasticsearch and Kibana so the stack is running for the labs.
 
 ```bash
@@ -166,7 +207,7 @@ sleep 60
 Explanation: wait briefly to allow services to finish starting before checking health.
 
 ```bash
-curl http://localhost:9200
+curl http://127.0.0.1:9200
 ```
 
 Explanation: a quick health check — Elasticsearch responds with cluster info when running.
@@ -195,4 +236,4 @@ Editor note: use `vim` for system file edits as shown; avoid running graphical e
 
 **Success**: Elasticsearch returns JSON cluster info
 
-Access Kibana: `http://localhost:5601` (wait 1-2 minutes if not ready)
+Access Kibana: `http://127.0.0.1:5601` (wait 1-2 minutes if not ready)

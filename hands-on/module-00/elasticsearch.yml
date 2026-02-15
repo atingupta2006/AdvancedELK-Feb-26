@@ -1,15 +1,12 @@
 # ======================== Elasticsearch Configuration =========================
 #
-# NOTE: Elasticsearch comes with reasonable defaults for most settings.
-#       Before you set out to tweak and tune the configuration, make sure you
-#       understand what are you trying to accomplish and the consequences.
+# REFERENCE FILE — This is the DEFAULT config that ships with Elasticsearch 9.x
+# on CentOS Stream 9. It includes auto-generated security settings.
 #
-# The primary way of configuring a node is via this file. This template lists
-# the most important settings you may want to configure for a production cluster.
+# DO NOT use this file directly. Follow the README.md instructions to create
+# a clean training config with security disabled.
 #
-# Please consult the documentation for further information on configuration options:
-# https://www.elastic.co/guide/en/elasticsearch/reference/index.html
-#
+# =============================================================================
 # ---------------------------------- Cluster -----------------------------------
 #
 # Use a descriptive name for your cluster:
@@ -50,7 +47,7 @@ path.logs: /var/log/elasticsearch
 #
 # ---------------------------------- Network -----------------------------------
 #
-# By default Elasticsearch is only accessible on localhost. Set a different
+# By default Elasticsearch is only accessible on 127.0.0.1. Set a different
 # address here to expose this node on the network:
 #
 #network.host: 192.168.0.1
@@ -116,10 +113,6 @@ http.host: 0.0.0.0
 # Connections are encrypted and mutually authenticated
 #transport.host: 0.0.0.0
 
-#----------------------- END SECURITY AUTO CONFIGURATION -------------------------discovery.type
-#
-#
-#discovery.ty
-
+#----------------------- END SECURITY AUTO CONFIGURATION -------------------------
 
 discovery.type: single-node

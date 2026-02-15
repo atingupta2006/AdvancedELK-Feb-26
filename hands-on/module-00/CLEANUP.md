@@ -20,7 +20,6 @@ sudo rm -rf /etc/kibana /var/lib/kibana /var/log/kibana
 sudo rm -rf /etc/logstash /var/lib/logstash /var/log/logstash
 sudo rm -rf /etc/filebeat /var/lib/filebeat /var/log/filebeat
 sudo rm -rf /opt/capstone
-sudo rm -f ~/GH/data/raw/access.log ~/GH/data/raw/app.log || true
 
 # Remove repo and GPG keys (force)
 sudo rm -f /etc/yum.repos.d/elasticsearch.repo

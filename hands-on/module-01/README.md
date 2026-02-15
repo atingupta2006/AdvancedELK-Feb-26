@@ -30,7 +30,7 @@ sudo systemctl status kibana --no-pager
 3. Access Kibana UI
 
 ```
-http://localhost:5601
+http://127.0.0.1:5601
 ```
 
 If you are accessing the VM from your laptop, use:
@@ -112,6 +112,11 @@ Menu (☰) → Management → Dev Tools
 **Objective**: Create index and add document using Dev Tools
 
 > An **index** in Elasticsearch is like a database table. It holds documents (JSON objects) and defines how fields are stored and searched through **mappings**.
+
+> **Concept: Text vs. Keyword**
+> *   **Text**: Used for full-text search (messages, descriptions). It is "analyzed" (broken into tokens/words).
+> *   **Keyword**: Used for exact matching, sorting, and aggregations (status codes, user IDs, paths). It is "not analyzed" (stored as one single string).
+> *   **Why this matters**: You cannot aggregate on a `text` field easily, and you cannot do a partial "word" search on a `keyword` field effectively. In our lab, we rely on automatic mapping for most fields, but defining the correct type is best practice.
 
 0. (Optional) Reset from a previous run (only if you already created `app-logs` before)
 
@@ -200,6 +205,7 @@ Click: Save data view to Kibana
 ```
 Menu (☰) → Analytics → Discover
 Select data view dropdown: app-logs
+Time picker: Absolute (2026-02-08 to 2026-02-12)
 ```
 
 **Success**: Documents visible in Discover
@@ -221,12 +227,11 @@ Data view dropdown: Select app-logs
 
 2. Set time range
 
-> The time picker controls which documents are visible. Documents outside the selected range are excluded from results.
+> The time picker controls which documents are visible. Since our test documents use Feb 9 2026, we MUST set an absolute range.
 
 ```
 Click time picker (top-right)
-Select: Last 24 hours
-Or select: Last 7 days (if documents not showing)
+Select: Absolute → Start: 2026-02-08 → End: 2026-02-12
 ```
 
 3. Search ERROR logs

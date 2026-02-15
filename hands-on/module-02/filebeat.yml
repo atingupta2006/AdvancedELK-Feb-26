@@ -22,7 +22,7 @@ filebeat.inputs:
           add_error_key: true
 
 output.elasticsearch:
-  hosts: ["http://localhost:9200"]
+  hosts: ["http://127.0.0.1:9200"]
   indices:
     - index: "web-logs-%{+yyyy.MM.dd}"
       when.equals:
@@ -35,4 +35,4 @@ output.elasticsearch:
 # 1) Comment out the entire output.elasticsearch block above
 # 2) Uncomment this block
 # output.logstash:
-#   hosts: ["localhost:5044"]
+#   hosts: ["127.0.0.1:5044"]
