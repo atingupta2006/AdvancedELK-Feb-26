@@ -1,243 +1,242 @@
 # Module 05 – Intermediate ELK: Production Readiness (Labs)
 
-Prereq: Module 02 completed (`web-logs-*`, `app-logs-*` available in Kibana).
+> **Stack Version**: Elasticsearch 9.x | Kibana 9.x | Logstash 9.x | Beats 9.x
+
+Repo location used in class: `~/GH`
+
+## 📖 Module Overview
+In the previous modules, we learned the basics of ingestion and visualization. Now we move to **Production Readiness**.
+
+This module bridges the gap between "it works on my laptop" and "it runs in production". We will cover:
+1.  **Explicit Mappings**: Stop letting Elasticsearch guess your data types.
+2.  **Templates**: Automate your index settings.
+3.  **Advanced Logstash**: Conditional parsing and error handling.
+4.  **Beats Modules**: The "Easy Button" for System and Metric data.
+5.  **Alerting**: Moving from "Looking at Dashboards" to "Getting Notified".
+
+---
+
+## 🧠 Concepts & Architecture (Read First)
+
+### 1. The "Mapping" Problem
+*   **Dynamic Mapping (Default)**: Elasticsearch guesses.
+    *   `"id": "123"` -> Guessed as `text`. Bad for sorting.
+    *   `"ip": "10.0.0.1"` -> Guessed as `text`. Cannot do CIDR searches.
+*   **Explicit Mapping (Production)**: You define the rules.
+    *   `"id"` -> `keyword`.
+    *   `"ip"` -> `ip`.
+
+### 2. Component Templates
+Think of these as "LEGO blocks" for your indices.
+*   **Block A**: `settings-production` (1 replica, 30s refresh).
+*   **Block B**: `mappings-web-logs` (IP, Status, Method).
+*   **Index Template**: Combines `Block A` + `Block B` to engage whenever an index matching `logs-web-*` is created.
+
+### 3. Monitoring Architecture
+We will install **Filebeat** (Logs) and **Metricbeat** (CPU/RAM) on the Linux server. They will ship data to Elasticsearch, and we will use pre-built dashboards to visualize it.
+
+---
+
+## Prerequisites
+- [Module 02](../module-02/README.md) completed.
+- Kibana: `http://127.0.0.1:5601`
 
 ---
 
 ## Lab 1: Create Custom Mappings
-Objective: Create an index with explicit mappings for application log fields
+**Use Case**: You have a JSON log with an `amount` field. Dynamic mapping guesses it is `text`, so you cannot calculate the "Average Amount". You must fix this.
 
-> **Mappings** define how fields are stored and indexed. Without explicit mappings, Elasticsearch uses dynamic mapping (auto-detects types), which often picks suboptimal types — e.g., a numeric string becomes `text` instead of `integer`. Explicit mappings give you control over field types, analyzers, and storage.
+1. **Open Dev Tools**
+   *   Menu (☰) → **Management** → **Dev Tools**.
 
-1. Kibana: Open Dev Tools
-```
-Menu (☰) → Management → Dev Tools
-```
-2. Create an index with explicit mappings
-
-> `keyword` fields are for exact matching and aggregations (no text analysis). `text` fields enable full-text search. Multi-fields (`.keyword` sub-field) give you both capabilities on the same field.
+2. **Define the Mapping**
+   *   **Concept**: We are telling ES exactly what each field is. "keyword" for exact match (Ids, status), "text" for search (messages), "double" for math (money).
 
 ```json
 PUT training-app-custom-000001
 {
-	"settings": { "number_of_shards": 1, "number_of_replicas": 0 },
-	"mappings": {
-		"properties": {
-			"timestamp": { "type": "date" },
-			"level": { "type": "keyword" },
-			"service": { "type": "keyword" },
-			"message": {
-				"type": "text",
-				"fields": { "keyword": { "type": "keyword", "ignore_above": 256 } }
-			},
-			"error": { "type": "keyword" },
-			"order_id": { "type": "keyword" },
-			"amount": { "type": "double" },
-			"currency": { "type": "keyword" }
-		}
-	}
+  "settings": { "number_of_shards": 1, "number_of_replicas": 0 },
+  "mappings": {
+    "properties": {
+      "timestamp": { "type": "date" },
+      "level": { "type": "keyword" },
+      "service": { "type": "keyword" },
+      "message": {
+        "type": "text",
+        "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } }
+      },
+      "error": { "type": "keyword" },
+      "amount": { "type": "double" },
+      "currency": { "type": "keyword" }
+    }
+  }
 }
 ```
 
-> `number_of_replicas: 0` is appropriate for single-node training environments. In production, set replicas ≥ 1 for fault tolerance.
+3. **Index a Document**
+   *   We verify it works by adding data.
 
-3. Index one sample document
 ```json
 POST training-app-custom-000001/_doc
 {
-	"timestamp": "2026-02-09T10:15:28Z",
-	"level": "ERROR",
-	"service": "payment-service",
-	"message": "Payment processing failed",
-	"error": "Timeout",
-	"order_id": "order_654",
-	"amount": 99.99,
-	"currency": "USD"
+  "timestamp": "2026-02-09T10:15:28Z",
+  "level": "ERROR",
+  "service": "payment-service",
+  "message": "Payment processing failed",
+  "error": "Timeout",
+  "amount": 99.99,
+  "currency": "USD"
 }
 ```
-4. Kibana: Verify mapping and document
 
-> Check Index Management to confirm field types match your mapping. If a field shows `text` when you expected `keyword`, the mapping wasn't applied correctly.
-
-```
-Menu (☰) → Management → Stack Management → Index Management → Indices
-Open: training-app-custom-000001 → Mappings
-
-Menu (☰) → Management → Stack Management → Data Views → Create data view
-Name: training-app-custom-*
-Index pattern: training-app-custom-*
-Timestamp field: timestamp
-Save
-
-Menu (☰) → Analytics → Discover
-Data view: training-app-custom-*
-```
-Success: Index exists with explicit field types
+4. **Verify in Kibana**
+   *   Go to **Stack Management** → **Index Management**.
+   *   Click `training-app-custom-000001` → **Mappings**.
+   *   **Check**: Does `amount` show as `double`? If yes, Success.
 
 ---
 
 ## Lab 2: Configure Index Templates
-Objective: Apply consistent mappings/settings automatically to new indices
+**Use Case**: You don't want to run that `PUT` command every day for `logs-2026-01-01`, `logs-2026-01-02`. You want it automatic.
 
-> **Index templates** apply predefined settings and mappings to any new index whose name matches the template pattern. **Component templates** are reusable building blocks — you define common fields once and compose them into multiple index templates.
-
-1. Kibana: Open Dev Tools
-```
-Menu (☰) → Management → Dev Tools
-```
-2. Create a component template (common fields)
-
-> Component templates hold shared configuration. Here we define fields common across all training indices — `@timestamp`, `level`, `service`.
+1. **Create Component Template (The "Base")**
+   *   This block holds settings common to ALL your apps.
 
 ```json
 PUT _component_template/training-app-common
 {
-	"template": {
-		"settings": { "number_of_shards": 1, "number_of_replicas": 0 },
-		"mappings": {
-			"properties": {
-				"@timestamp": { "type": "date" },
-				"level": { "type": "keyword" },
-				"service": { "type": "keyword" }
-			}
-		}
-	}
+  "template": {
+    "settings": { "number_of_shards": 1, "number_of_replicas": 0 },
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "level": { "type": "keyword" },
+        "service": { "type": "keyword" }
+      }
+    }
+  }
 }
 ```
-3. Create an index template that uses the component template
 
-> `composed_of` pulls in component templates. `priority` determines which template wins when multiple templates match the same index pattern — higher value wins.
+2. **Create Index Template (The "Rule")**
+   *   This rule says: "Any index starting with `training-app-*` gets the common settings AND these specific message mappings."
 
 ```json
 PUT _index_template/training-app-template
 {
-	"index_patterns": ["training-app-*"],
-	"priority": 501,
-	"composed_of": ["training-app-common"],
-	"template": {
-		"mappings": {
-			"properties": {
-				"message": {
-					"type": "text",
-					"fields": {
-						"keyword": { "type": "keyword", "ignore_above": 256 }
-					}
-				}
-			}
-		}
-	}
+  "index_patterns": ["training-app-*"],
+  "priority": 500,
+  "composed_of": ["training-app-common"],
+  "template": {
+    "mappings": {
+      "properties": {
+        "message": {
+          "type": "text",
+          "fields": {
+            "keyword": { "type": "keyword", "ignore_above": 256 }
+          }
+        }
+      }
+    }
+  }
 }
 ```
-4. Test: Create a new index that matches the pattern
 
-> Creating an index matching `training-app-*` should automatically apply both the component template fields and the index template mappings.
+3. **Test It**
+   *   Create a *new* index that matches the pattern.
 
 ```json
 PUT training-app-test-000001
 ```
-5. Kibana: Verify template application
-```
-Menu (☰) → Management → Stack Management → Index Management → Indices
-Open: training-app-test-000001 → Mappings
 
-Menu (☰) → Management → Stack Management → Index Management → Index Templates
-Search: training-app-template
+4. **Verify**
+   *   Get the mapping. It should have `level` (from component) and `message` (from template).
+
+```json
+GET training-app-test-000001/_mapping
 ```
-Success: New `training-app-*` indices inherit mappings/settings
 
 ---
 
 ## Lab 3: Build Advanced Logstash Pipeline
-Objective: Parse NDJSON logs, add conditional enrichment, index into a template-backed index
+**Use Case**: Complex logic. "If the log is ERROR, tag it 'urgent'. If it is DEBUG, drop it."
 
-1. Install Logstash and prepare app log
+1. **Prepare Data**
 ```bash
+# Ensure logstash is installed
 sudo dnf install -y logstash
-sudo mkdir -p /opt/elk-training/data/raw
-cd ~/GH
-sudo cp ./data/raw/app.log /opt/elk-training/data/raw/
+# Copy sample log
+sudo cp ~/GH/data/raw/app.log /opt/elk-training/data/raw/
 ```
-2. Create a Logstash pipeline config in VSCode
-```bash
-code ~/module05-logstash-advanced.conf
-```
-Paste this content:
 
-> `codec => json` tells Logstash each line is a complete JSON object (NDJSON format) — no grok parsing needed. The `date` filter replaces `@timestamp` with the log's own timestamp. The conditional tags ERROR events for easy filtering in Kibana.
+2. **Create Pipeline Config**
+```bash
+code ~/module05-advanced.conf
+```
+   *   **Logic**:
+       *   `input`: Read the file. `codec => json` because it is NDJSON.
+       *   `filter`: Parse the date. **Conditional**: If level is ERROR, add a tag.
+       *   `output`: Send to ES with a dynamic index name `training-app-pipeline-YYYY.MM.dd`.
 
 ```conf
 input {
-	file {
-		path => "/opt/elk-training/data/raw/app.log"
-		start_position => "beginning"
-		sincedb_path => "/dev/null"
-		codec => json
-	}
+  file {
+    path => "/opt/elk-training/data/raw/app.log"
+    start_position => "beginning"
+    sincedb_path => "/dev/null"
+    codec => json
+  }
 }
 
 filter {
-	date {
-		match => ["timestamp", "ISO8601"]
-		target => "@timestamp"
-	}
-	if [level] == "ERROR" { mutate { add_tag => ["error_event"] } }
+  date {
+    match => ["timestamp", "ISO8601"]
+    target => "@timestamp"
+  }
+  if [level] == "ERROR" {
+    mutate { add_tag => ["urgent_attention"] }
+  }
 }
 
 output {
-	elasticsearch {
-		hosts => ["http://127.0.0.1:9200"]
-		index => "training-app-pipeline-%{+YYYY.MM.dd}"
-	}
+  elasticsearch {
+    hosts => ["http://127.0.0.1:9200"]
+    index => "training-app-pipeline-%{+YYYY.MM.dd}"
+  }
 }
 ```
 
-> `sincedb_path => "/dev/null"` forces Logstash to re-read the file from the beginning every restart — useful for training but never use in production.
-
-3. Copy the pipeline into Logstash config directory
+3. **Deploy & Run**
 ```bash
-sudo cp ~/module05-logstash-advanced.conf /etc/logstash/conf.d/module05-advanced.conf
-```
-4. Start Logstash
-```bash
-sudo systemctl enable --now logstash
+sudo cp ~/module05-advanced.conf /etc/logstash/conf.d/
 sudo systemctl restart logstash
 ```
-5. Kibana: Verify parsed/enriched fields
-```
-Menu (☰) → Management → Stack Management → Data Views → Create data view
-Name: training-app-pipeline-*
-Index pattern: training-app-pipeline-*
-Timestamp field: @timestamp
-Save
 
-Menu (☰) → Analytics → Discover
-Data view: training-app-pipeline-*
-KQL: tags : "error_event"
-```
-Success: Logs are parsed and enriched into `training-app-pipeline-*`
+4. **Verify in Kibana**
+   *   Create Data View `training-app-pipeline-*`.
+   *   Discover: Filter for `tags: urgent_attention`.
+   *   **Success**: Only ERROR logs appear.
 
 ---
 
-## Lab 4: Configure Beats for Monitoring
-Objective: Ship system logs and metrics using Filebeat + Metricbeat modules
+## Lab 4: Configure Beats & Modules
+**Use Case**: "I want to see CPU usage and System Logs. I don't want to write a config file." -> Use Modules.
 
-> **Beats modules** are pre-built configurations for common data sources. The `system` module for Filebeat collects system messages and auth logs; the `system` module for Metricbeat collects CPU, memory, disk, and network metrics — all with zero custom configuration.
-
-1. Install Filebeat and Metricbeat
+1. **Install Beats**
 ```bash
 sudo dnf install -y filebeat metricbeat
 ```
-2. Configure Filebeat (create in VSCode, then copy)
-```bash
-code ~/module05-filebeat.yml
-```
-Paste this content:
 
-> This config disables direct file inputs and uses modules instead. `setup.kibana` tells Filebeat where to install dashboards and data views.
+2. **Configure Output (Filebeat)**
+   *   We point Filebeat to Kibana (for dashboards) and ES (for data).
+```bash
+# Backup default
+sudo cp /etc/filebeat/filebeat.yml /etc/filebeat/filebeat.yml.bak
+# Create simple config
+code ~/filebeat-simple.yml
+```
 
 ```yaml
-filebeat.inputs: []
-
 filebeat.config.modules:
   path: ${path.config}/modules.d/*.yml
   reload.enabled: false
@@ -248,185 +247,64 @@ setup.kibana:
 output.elasticsearch:
   hosts: ["http://127.0.0.1:9200"]
 ```
-Copy into place:
+
 ```bash
-sudo cp /etc/filebeat/filebeat.yml /etc/filebeat/filebeat.yml.bak 2>/dev/null || true
-sudo cp ~/module05-filebeat.yml /etc/filebeat/filebeat.yml
+sudo cp ~/filebeat-simple.yml /etc/filebeat/filebeat.yml
 ```
-3. Enable the system module and enable filesets (in VSCode)
 
-> `filebeat modules enable system` creates a YAML config in `modules.d/`. We then enable specific filesets — the system messages fileset for `/var/log/messages` and `auth` for authentication events.
-
+3. **Enable System Module**
+   *   This turns on the "System" collector (syslog + auth).
 ```bash
 sudo filebeat modules enable system
-sudo cp /etc/filebeat/modules.d/system.yml ~/module05-system.yml
-code ~/module05-system.yml
 ```
-In `~/module05-system.yml`, set:
-- Under the syslog fileset section: `enabled: true`
-- Under the auth fileset section: `enabled: true`
 
-> On CentOS Stream 9, the syslog fileset reads from `/var/log/messages` (not `/var/log/syslog`).
-
-Then copy it back:
+4. **Setup & Start**
+   *   `setup` loads the pre-built Dashboards into Kibana.
 ```bash
-sudo cp ~/module05-system.yml /etc/filebeat/modules.d/system.yml
-```
-4. Setup and start Filebeat
-
-> `filebeat setup` installs index templates, ingest pipelines, and Kibana dashboards for enabled modules. Run this once per module.
-
-```bash
-sudo filebeat setup -e
+sudo filebeat setup
 sudo systemctl enable --now filebeat
 ```
-5. Enable Metricbeat system module, setup, and start
+
+5. **Repeat for Metricbeat (CPU/Ram)**
 ```bash
 sudo metricbeat modules enable system
-sudo metricbeat setup -e
+sudo metricbeat setup
 sudo systemctl enable --now metricbeat
 ```
-6. Kibana: Verify system logs + metrics
-```
-Menu (☰) → Management → Stack Management → Data Views → Create data view
-Name: filebeat-*
-Index pattern: filebeat-*
-Timestamp field: @timestamp
-Save
 
-Menu (☰) → Management → Stack Management → Data Views → Create data view
-Name: metricbeat-*
-Index pattern: metricbeat-*
-Timestamp field: @timestamp
-Save
-
-Menu (☰) → Analytics → Discover
-Data view: filebeat-*
-Data view: metricbeat-*
-```
-Success: Filebeat + Metricbeat data is visible in Discover
+6. **Verify**
+   *   Kibana → **Analytics** → **Dashboard**.
+   *   Search **"[Metricbeat System] Host overview"**.
+   *   **Success**: You see live CPU/Memory graphs of your VM.
 
 ---
 
-## Lab 5: Advanced Visualizations with Lens and TSVB
-Objective: Build a layered Lens chart and a TSVB time series with thresholds + annotations
+## Lab 5: Alerting
+**Use Case**: "Email me if Error Rate > 5%".
 
-> **Lens** supports multi-layer charts (overlay different metrics on the same visualization) and formulas (computed metrics like ratios). **TSVB** (Time Series Visual Builder) offers advanced time-series features like color rules, annotations, and multiple panel types.
+1. **Create Connector**
+   *   Menu (☰) → **Stack Management** → **Connectors**.
+   *   Create wrapper **Server Log**. (For training, we write to logs. In prod, use Email/Slack).
+   *   Name: `Server Log Output`.
 
-1. Lens: Multi-layer time series (Total vs Errors)
+2. **Create Rule**
+   *   Menu (☰) → **Stack Management** → **Rules**.
+   *   **Create rule**.
+   *   Name: `High Error Rate`.
+   *   Type: **Index threshold**.
+   *   Index: `training-app-pipeline-*`.
+   *   **Condition**:
+       *   WHEN `count`
+       *   OF `level.keyword: ERROR` (Use KQL)
+       *   IS ABOVE `0` (For testing: alert on ANY error).
+       *   FOR THE LAST `5 minutes`.
 
-> Multi-layer Lens charts overlay different datasets. Layer 1 shows total events. Layer 2 applies a filter to show only errors — making it easy to spot error spikes relative to traffic.
+3. **Action**
+   *   Add Action → Select `Server Log Output`.
+   *   Message: `ALERT: Errors detected in application logs!`.
 
-```
-Menu (☰) → Analytics → Visualize Library → Create visualization → Lens
-Data view: training-app-pipeline-*
+4. **Test**
+   *   Wait 1 minute.
+   *   Check Rule details in UI to see "Active Alerts".
 
-Visualization: Line
-Horizontal axis: @timestamp (Date histogram)
-
-Layer 1
-Metric: Count of records
-
-Layer 2
-Metric: Count of records
-Filter (layer): level : "ERROR"
-
-Save as: M05 - App Events (Total vs Errors)
-```
-2. Lens: Formula (Error rate)
-
-> Lens formulas let you compute ratios, percentages, and other derived metrics. `count(kql='...') / count()` calculates the error rate as a percentage.
-
-```
-In the same Lens (or a new one)
-Metric: Formula
-Formula: count(kql='level : "ERROR"') / count()
-Format: Percent
-
-Save as: M05 - App Error Rate
-```
-3. TSVB: Time series + threshold
-
-> TSVB color rules change the chart line color when a metric crosses a threshold — visual alerting built into the chart itself.
-
-```
-Menu (☰) → Analytics → Visualize Library → Create visualization → TSVB
-Index pattern: metricbeat-*
-Time field: @timestamp
-
-Visualization type: Time Series
-Series aggregation: Average
-Field: system.cpu.total.norm.pct
-
-Panel options → Color rules
-Add rule: if value is above 0.80 then red
-
-Save as: M05 - CPU Usage (TSVB)
-```
-4. TSVB: Add annotations from application errors
-
-> **Annotations** overlay events from a different index on top of a time series. Here we mark application errors on the CPU chart to correlate error spikes with resource usage.
-
-```
-Edit: M05 - CPU Usage (TSVB)
-Annotations → Add annotation
-Index pattern: training-app-pipeline-*
-Time field: @timestamp
-Query: level : "ERROR"
-Fields: message
-
-Save
-```
-Success: Lens + TSVB visuals saved and show meaningful trends
-
----
-
-## Lab 6: Configure Alerting Rules
-Objective: Create a threshold-based rule that triggers on application errors and logs an action
-
-> **Kibana alerting** runs server-side checks at defined intervals. When conditions are met, it triggers **actions** via **connectors** (Slack, email, server log, etc.). Rules evaluate queries against indices — no external monitoring tool needed.
-
-1. Kibana: Create a connector (Server log)
-
-> Connectors define where alert actions send notifications. The "Server log" connector writes to Kibana's own log — simplest option for training.
-
-```
-Menu (☰) → Management → Stack Management → Connectors → Create connector
-Type: Server log
-Name: M05 - Server log connector
-Save
-```
-2. Kibana: Create an Index threshold rule
-
-> Index threshold rules query an index on a schedule. When the aggregation result crosses the threshold, the rule fires and executes its configured actions.
-
-```
-Menu (☰) → Management → Stack Management → Rules → Create rule
-Rule type: Index threshold
-Name: M05 - App Errors Detected
-
-Indices to query: training-app-pipeline-*
-Time field: @timestamp
-
-WHEN: count
-OVER: all documents
-THRESHOLD: is above 0
-FOR THE LAST: 1 hour
-KQL: level : "ERROR"
-Check every: 1 minute
-```
-3. Add an action
-```
-Actions → Add action
-Connector: M05 - Server log connector
-Action frequency: On each check interval
-Message: {{context.message}}
-Save
-```
-4. Kibana: Verify alerts
-```
-Menu (☰) → Management → Stack Management → Rules
-Open: M05 - App Errors Detected
-Check: rule status and alerts
-```
-Success: Rule generates alerts based on existing error events
+**Success**: You have built a full monitoring loop: Ingest -> Visualize -> Alert.
