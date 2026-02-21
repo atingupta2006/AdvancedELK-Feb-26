@@ -232,9 +232,9 @@ sudo dnf install -y filebeat metricbeat
 ```bash
 # Backup default
 sudo cp /etc/filebeat/filebeat.yml /etc/filebeat/filebeat.yml.bak
-# Create simple config
-code ~/filebeat-simple.yml
 ```
+
+- Edit /etc/filebeat/filebeat.yml
 
 ```yaml
 filebeat.config.modules:
@@ -246,10 +246,6 @@ setup.kibana:
 
 output.elasticsearch:
   hosts: ["http://127.0.0.1:9200"]
-```
-
-```bash
-sudo cp ~/filebeat-simple.yml /etc/filebeat/filebeat.yml
 ```
 
 3. **Enable System Module**
@@ -284,7 +280,7 @@ sudo systemctl enable --now metricbeat
 
 1. **Create Connector**
    *   Menu (☰) → **Stack Management** → **Connectors**.
-   *   Create wrapper **Server Log**. (For training, we write to logs. In prod, use Email/Slack).
+   *   Create wrapper **Server Log**
    *   Name: `Server Log Output`.
 
 2. **Create Rule**
