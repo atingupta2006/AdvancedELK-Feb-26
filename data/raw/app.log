@@ -1,0 +1,30 @@
+{"timestamp":"2026-02-09T10:15:23Z","level":"INFO","service":"auth-service","message":"User login successful","user_id":"user_12345","session_id":"sess_abc123"}
+{"timestamp":"2026-02-09T10:15:24Z","level":"INFO","service":"payment-service","message":"Payment processed","amount":99.99,"currency":"USD","order_id":"order_789"}
+{"timestamp":"2026-02-09T10:15:25Z","level":"DEBUG","service":"auth-service","message":"Token validated","user_id":"user_67890"}
+{"timestamp":"2026-02-09T10:15:26Z","level":"INFO","service":"inventory-service","message":"Stock updated","product_id":"prod_456","quantity":50}
+{"timestamp":"2026-02-09T10:15:27Z","level":"WARN","service":"payment-service","message":"Payment retry attempt","order_id":"order_321","attempt":2}
+{"timestamp":"2026-02-09T10:15:28Z","level":"ERROR","service":"payment-service","message":"Payment processing failed","error":"Timeout","order_id":"order_654"}
+{"timestamp":"2026-02-09T10:15:29Z","level":"INFO","service":"notification-service","message":"Email sent","recipient":"user@example.com","type":"order_confirmation"}
+{"timestamp":"2026-02-09T10:15:30Z","level":"INFO","service":"auth-service","message":"User logout","user_id":"user_12345"}
+{"timestamp":"2026-02-09T10:15:31Z","level":"ERROR","service":"inventory-service","message":"Database connection failed","error":"Connection refused","host":"db-primary"}
+{"timestamp":"2026-02-09T10:15:32Z","level":"INFO","service":"search-service","message":"Search query executed","query":"laptop","results":234}
+{"timestamp":"2026-02-09T10:15:33Z","level":"WARN","service":"auth-service","message":"Failed login attempt","username":"admin","ip":"192.168.1.200"}
+{"timestamp":"2026-02-09T10:15:34Z","level":"INFO","service":"recommendation-service","message":"Recommendations generated","user_id":"user_12345","count":10}
+{"timestamp":"2026-02-09T10:15:35Z","level":"DEBUG","service":"cache-service","message":"Cache hit","key":"products:featured","ttl":3600}
+{"timestamp":"2026-02-09T10:15:36Z","level":"INFO","service":"shipping-service","message":"Shipping label created","order_id":"order_999","tracking":"TRACK123456"}
+{"timestamp":"2026-02-09T10:15:37Z","level":"ERROR","service":"shipping-service","message":"Carrier API error","error":"Rate limit exceeded","carrier":"USPS"}
+{"timestamp":"2026-02-09T10:15:38Z","level":"INFO","service":"review-service","message":"Review submitted","product_id":"prod_789","rating":5}
+{"timestamp":"2026-02-09T10:15:39Z","level":"WARN","service":"inventory-service","message":"Low stock alert","product_id":"prod_123","quantity":5}
+{"timestamp":"2026-02-09T10:15:40Z","level":"INFO","service":"auth-service","message":"Password reset requested","email":"user@example.com"}
+{"timestamp":"2026-02-09T10:15:41Z","level":"ERROR","service":"notification-service","message":"SMS delivery failed","error":"Invalid recipient","phone":"+1234567890"}
+{"timestamp":"2026-02-09T10:15:42Z","level":"INFO","service":"analytics-service","message":"Page view tracked","page":"/products","session_id":"sess_xyz789"}
+{"timestamp":"2026-02-09T10:15:43Z","level":"DEBUG","service":"payment-service","message":"Payment validation started","order_id":"order_555"}
+{"timestamp":"2026-02-09T10:15:44Z","level":"INFO","service":"payment-service","message":"Payment validated","order_id":"order_555","method":"credit_card"}
+{"timestamp":"2026-02-09T10:15:45Z","level":"WARN","service":"auth-service","message":"Suspicious activity detected","user_id":"user_99999","reason":"Multiple failed logins"}
+{"timestamp":"2026-02-09T10:15:46Z","level":"INFO","service":"cart-service","message":"Item added to cart","user_id":"user_12345","product_id":"prod_456"}
+{"timestamp":"2026-02-09T10:15:47Z","level":"ERROR","service":"search-service","message":"Search index update failed","error":"Index locked","index":"products"}
+{"timestamp":"2026-02-09T10:15:48Z","level":"INFO","service":"order-service","message":"Order created","order_id":"order_111","user_id":"user_12345","total":299.99}
+{"timestamp":"2026-02-09T10:15:49Z","level":"INFO","service":"order-service","message":"Order status updated","order_id":"order_111","status":"processing"}
+{"timestamp":"2026-02-09T10:15:50Z","level":"DEBUG","service":"inventory-service","message":"Inventory check","product_id":"prod_789","available":true}
+{"timestamp":"2026-02-09T10:15:51Z","level":"WARN","service":"payment-service","message":"Fraud check triggered","order_id":"order_222","score":0.75}
+{"timestamp":"2026-02-09T10:15:52Z","level":"INFO","service":"notification-service","message":"Push notification sent","user_id":"user_12345","type":"order_shipped"}

@@ -1,0 +1,38 @@
+filebeat.inputs:
+  - type: filestream
+    id: web-access
+    enabled: true
+    paths:
+      - /opt/elk-training/data/raw/access.log
+    fields:
+      log_type: web
+    fields_under_root: true
+
+  - type: filestream
+    id: app-json
+    enabled: false
+    paths:
+      - /opt/elk-training/data/raw/app.log
+    fields:
+      log_type: app
+    fields_under_root: true
+    parsers:
+      - ndjson:
+          target: ""
+          add_error_key: true
+
+output.elasticsearch:
+  hosts: ["http://127.0.0.1:9200"]
+  indices:
+    - index: "web-logs-%{+yyyy.MM.dd}"
+      when.equals:
+        log_type: "web"
+    - index: "app-logs-%{+yyyy.MM.dd}"
+      when.equals:
+        log_type: "app"
+
+# Lab 2+: ship to Logstash instead of Elasticsearch
+# 1) Comment out the entire output.elasticsearch block above
+# 2) Uncomment this block
+# output.logstash:
+#   hosts: ["127.0.0.1:5044"]

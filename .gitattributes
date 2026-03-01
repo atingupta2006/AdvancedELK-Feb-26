@@ -1,0 +1,7 @@
+# Mark instructor materials and workspace docs as vendored so GitHub ignores them in language stats
+instructor-prep/** linguist-vendored
+docs/** linguist-vendored
+prompts/** linguist-vendored
+references/** linguist-vendored
+scripts/** linguist-vendored
+tools/** linguist-vendored
