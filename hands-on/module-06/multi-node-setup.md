@@ -8,6 +8,8 @@
 
 > **Hostname**: No need to change OS hostnames — Elasticsearch uses `node.name` from the config, not the OS hostname.
 
+> **`/etc/hosts`**: No changes required — the config uses IP addresses directly in `discovery.seed_hosts`, so no DNS or hosts file lookups are needed.
+
 ---
 
 ## 1. Stop & Clean (All 3 Nodes)
@@ -20,6 +22,16 @@ sudo chown -R elasticsearch:elasticsearch /var/lib/elasticsearch /var/log/elasti
 ```
 
 ## 2. Configure (All 3 Nodes)
+
+Your current single-node config (from Module 00) has these settings that **must change**:
+
+| Setting | Single-Node (Module 00) | Multi-Node (Now) |
+|---------|------------------------|-------------------|
+| `cluster.name` | `elk-training` | `elk-training-cluster` |
+| `node.name` | `node-1` (same on all) | Unique per node: `node-1`, `node-2`, `node-3` |
+| `discovery.type` | `single-node` | **Remove this line entirely** |
+| `discovery.seed_hosts` | _(not set)_ | `["10.0.20.20:9300", "10.0.20.26:9300", "10.0.20.23:9300"]` |
+| `cluster.initial_master_nodes` | _(not set)_ | `["node-1", "node-2", "node-3"]` |
 
 ```bash
 sudo cp /etc/elasticsearch/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml.bak
