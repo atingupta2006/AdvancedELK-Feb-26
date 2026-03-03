@@ -23,17 +23,18 @@ sudo chown -R elasticsearch:elasticsearch /var/lib/elasticsearch /var/log/elasti
 
 ## 1b. Limit JVM Heap (All 3 Nodes)
 
-ES auto-configures heap to ~50% of RAM (e.g. **8 GB on a 16 GB VM**). For lab workloads, 4 GB is a good balance:
+ES auto-configures heap to ~50% of RAM (e.g. **8 GB on a 16 GB VM**). For lab workloads, 4 GB is a good balance.
+
+This file does **not exist yet** — you are creating it. ES reads any `.options` file in this directory on startup:
 
 ```bash
-sudo vim /etc/elasticsearch/jvm.options.d/heap.options
+echo -e "-Xms4g\n-Xmx4g" | sudo tee /etc/elasticsearch/jvm.options.d/heap.options
 ```
 
-Paste:
+Verify:
 
-```
--Xms4g
--Xmx4g
+```bash
+cat /etc/elasticsearch/jvm.options.d/heap.options
 ```
 
 > Both values must be the **same**. Never exceed 50% of RAM — the rest is needed for OS file cache.
