@@ -135,6 +135,13 @@ curl -s -u elastic:YOUR_PASSWORD http://127.0.0.1:9200/_cluster/health?pretty
 
 Kibana must connect to Elasticsearch as the `kibana_system` user. You will add the username to `kibana.yml` and store the password in the Kibana keystore.
 
+**Password reminder** (these are **two different** passwords):
+
+| User | Step | Password Purpose | Used Where |
+|------|------|------------------|-----------|
+| `elastic` | 4.3 | Superuser; logging into Kibana UI | Browser login: http://127.0.0.1:5601 |
+| `kibana_system` | 5.3 | Kibana internal authentication to ES | Kibana keystore (step 5.4) |
+
 ### 5.1 Backup and update Kibana config
 
 ```bash
@@ -170,7 +177,12 @@ Enter a password (e.g. `Kibana123!`). Record it if you need to reuse it later.
 sudo /usr/share/kibana/bin/kibana-keystore add elasticsearch.password
 ```
 
-When prompted, enter the **same** `kibana_system` password you set in step 5.3. If the key already exists, choose **Overwrite**.  
+When prompted, enter the **same** `kibana_system` password you set in step 5.3. If the key already exists, choose **Overwrite**.
+
+> **Important**: This is the `kibana_system` password from step 5.3, **NOT** the `elastic` password from step 4.3.  
+> The keystore is for Kibana's internal use to connect to Elasticsearch.  
+> The `elastic` password is for logging into the Kibana UI (section 6.2).
+
 *(Path is for RPM install; on archive installs the script is in `$KIBANA_HOME/bin/`.)*
 
 ### 5.5 Restart Kibana
