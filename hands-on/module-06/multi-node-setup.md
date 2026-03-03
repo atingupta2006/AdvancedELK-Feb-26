@@ -181,6 +181,7 @@ sudo sed -i '/cluster.initial_master_nodes/d' /etc/elasticsearch/elasticsearch.y
 | `master_not_discovered` | Start node-1 first; wait for 9200 response before others |
 | Every node shows as master | Old data not cleared — see **"Fix: Every Node is Master"** below |
 | Cluster red | Clear all 3 data dirs and re-form |
+| JVM heap not applied / conflicting `-Xms`/`-Xmx` | See **"Fix: Conflicting Heap Settings"** below |
 | Check logs | `sudo journalctl -u elasticsearch -n 100 --no-pager` |
 
 ---
@@ -252,6 +253,39 @@ sudo journalctl -u elasticsearch --since "10 minutes ago" --no-pager
 
 ```bash
 sudo tail -100 /var/log/elasticsearch/elk-training-cluster.log
+```
+
+---
+
+### Fix: Conflicting Heap Settings
+
+If `ps aux` shows **multiple different** `-Xms`/`-Xmx` values (e.g. `-Xms4m -Xmx64m` AND `-Xms4g -Xmx4g`), old processes are still running.
+
+**1. Kill all Java/Elasticsearch processes**
+
+```bash
+sudo pkill -9 java
+sleep 5
+```
+
+**2. Systemctl restart**
+
+```bash
+sudo systemctl stop elasticsearch
+sudo systemctl start elasticsearch
+sleep 30
+```
+
+**3. Verify — should show only one set**
+
+```bash
+ps aux | grep elasticsearch | grep -oP '\-Xms\S+|\-Xmx\S+'
+```
+
+Expected output (only one line of each):
+```
+-Xms4g
+-Xmx4g
 ```
 
 ---
