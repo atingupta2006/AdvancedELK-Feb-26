@@ -21,6 +21,23 @@ sudo rm -rf /var/log/elasticsearch/*
 sudo chown -R elasticsearch:elasticsearch /var/lib/elasticsearch /var/log/elasticsearch
 ```
 
+## 1b. Limit JVM Heap (All 3 Nodes)
+
+ES auto-configures heap to ~50% of RAM which may be too high for lab VMs. Limit to 1 GB:
+
+```bash
+sudo vim /etc/elasticsearch/jvm.options.d/heap.options
+```
+
+Paste:
+
+```
+-Xms1g
+-Xmx1g
+```
+
+> Both values must be the **same**. Use `1g`–`2g` for lab VMs.
+
 ## 2. Update `/etc/hosts` (All 3 Nodes)
 
 Add these lines to `/etc/hosts` on **each** of the 3 nodes:
@@ -74,6 +91,34 @@ xpack.security.transport.ssl.enabled: false
 ```
 
 **Make sure** `discovery.type: single-node` is **removed**.
+
+### Shortcut: Copy Config from Node-1 to Other Nodes
+
+Instead of editing manually on each node, copy from node-1 and just change `node.name`:
+
+```bash
+# From node-1 (10.0.20.20) — copy to node-2 and node-3:
+scp /etc/elasticsearch/elasticsearch.yml azureuser@10.0.20.26:/tmp/elasticsearch.yml
+scp /etc/elasticsearch/elasticsearch.yml azureuser@10.0.20.23:/tmp/elasticsearch.yml
+```
+
+On **node-2** (10.0.20.26):
+
+```bash
+sudo cp /tmp/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml
+sudo sed -i 's/node.name: node-1/node.name: node-2/' /etc/elasticsearch/elasticsearch.yml
+sudo chown root:elasticsearch /etc/elasticsearch/elasticsearch.yml
+```
+
+On **node-3** (10.0.20.23):
+
+```bash
+sudo cp /tmp/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml
+sudo sed -i 's/node.name: node-1/node.name: node-3/' /etc/elasticsearch/elasticsearch.yml
+sudo chown root:elasticsearch /etc/elasticsearch/elasticsearch.yml
+```
+
+> Replace `azureuser` with your SSH username if different.
 
 ## 4. Verify Config (Each Node)
 
