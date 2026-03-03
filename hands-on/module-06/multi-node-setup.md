@@ -1,4 +1,4 @@
-# 3-Node Elasticsearch Cluster — Cheat Sheet
+# 3-Node Elasticsearch Cluster
 
 | Node   | IP           |
 |--------|--------------|
