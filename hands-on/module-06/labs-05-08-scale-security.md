@@ -29,10 +29,16 @@ GET _cluster/health
 > `_cat/nodes` lists all nodes with their roles, heap usage, CPU, and load. The `*` marks the current master node.
 
 ```json
-GET _cat/nodes?v&h=name,node.role,heap.percent,cpu,load_1m
+GET _cat/nodes?v&h=name,roles,heap.percent,cpu,load_1m
 ```
 
-> Node roles: `m` = master-eligible, `d` = data, `i` = ingest, `l` = machine learning. A single-node cluster holds all roles.
+> The `roles` column may display letters such as:
+> * `m` = master, `d` = data, `i` = ingest
+> * `h` = hot, `w` = warm, `c` = cold, `f` = frozen
+> * `l` = machine learning, `t` = transform
+> * `r` = remote cluster client, `s` = content
+>
+> In a single-node cluster, all roles are typically present.
 
 4. Review shard allocation
 
@@ -259,24 +265,13 @@ POST perf-test-000001/_forcemerge?max_num_segments=1
 
 > **Important**: All subsequent labs (Lab 8 onward) require security to be enabled. Complete this lab fully before proceeding.
 
-1. Enable security in Elasticsearch
+1. Backup and enable security in Elasticsearch
 
 ```bash
-code ~/elasticsearch-security.yml
+sudo cp /etc/elasticsearch/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml.bak.$(date +%F)
 ```
 
-> `xpack.security.enabled: true` activates authentication and authorization. `xpack.security.transport.ssl.enabled: false` is acceptable for single-node training — production requires TLS.
-
-Paste this addition (to append to existing elasticsearch.yml):
-
-```yaml
-xpack.security.enabled: true
-xpack.security.transport.ssl.enabled: false
-```
-
-```bash
-sudo cp /etc/elasticsearch/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml.bak
-```
+> `xpack.security.enabled: true` activates authentication and authorization. `xpack.security.enrollment.enabled: true` enables enrollment tokens for new nodes. Do **NOT** disable transport SSL — Elasticsearch 9.x manages transport security automatically.
 
 Open the actual config and update security settings:
 
@@ -294,28 +289,37 @@ sudo sed -i 's/xpack.security.enrollment.enabled: false/xpack.security.enrollmen
 ```bash
 sudo systemctl restart elasticsearch
 sudo /usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic -i
+sudo /usr/share/elasticsearch/bin/elasticsearch-reset-password -u kibana_system -i
 ```
 
-> Enter a password when prompted (e.g., `Training123!`). Note this password — you'll need it for Kibana.
+> Enter a password when prompted (e.g., `Training123!`). Note both passwords — you'll need them for Kibana.
 
-3. Update Kibana to use credentials
+3. Verify secure access
+
+```bash
+curl -k -u elastic https://127.0.0.1:9200
+```
+
+> The `-k` flag skips certificate verification (acceptable for training). You should see the cluster info JSON response.
+
+4. Update Kibana to use credentials
 
 ```bash
 sudo cp /etc/kibana/kibana.yml /etc/kibana/kibana.yml.bak
 ```
 
+> With security enabled, Elasticsearch now uses HTTPS. Update the Kibana config to connect over HTTPS and authenticate as `kibana_system`.
+
 ```bash
+sudo sed -i 's|elasticsearch.hosts:.*|elasticsearch.hosts: ["https://127.0.0.1:9200"]|' /etc/kibana/kibana.yml
 sudo sed -i '$ a\\' /etc/kibana/kibana.yml
 sudo sed -i '$ a\elasticsearch.username: "kibana_system"' /etc/kibana/kibana.yml
 ```
 
-> Set the `kibana_system` user password:
+> Store the `kibana_system` password securely in the Kibana keystore:
 
 ```bash
-sudo /usr/share/elasticsearch/bin/elasticsearch-reset-password -u kibana_system -i
-```
-
-```bash
+sudo /usr/share/kibana/bin/kibana-keystore create
 sudo /usr/share/kibana/bin/kibana-keystore add elasticsearch.password
 ```
 
@@ -325,7 +329,7 @@ sudo /usr/share/kibana/bin/kibana-keystore add elasticsearch.password
 sudo systemctl restart kibana
 ```
 
-4. Log into Kibana with elastic superuser
+5. Log into Kibana with elastic superuser
 
 ```
 http://127.0.0.1:5601
@@ -333,7 +337,7 @@ Username: elastic
 Password: <password set in step 2>
 ```
 
-5. Create custom roles in Kibana
+6. Create custom roles in Kibana
 
 > A **role** defines what indices a user can access and what Kibana features they can use. Index privileges control data access; Kibana privileges control UI features.
 
@@ -361,7 +365,7 @@ Role 2: app-logs-admin
   Save
 ```
 
-6. Create users with specific roles
+7. Create users with specific roles
 
 ```
 Menu (☰) → Management → Stack Management → Security → Users → Create user
@@ -379,7 +383,7 @@ User 2:
   Save
 ```
 
-7. Test user access restrictions
+8. Test user access restrictions
 
 > Open a private/incognito browser window to test each user without logging out the elastic superuser.
 
@@ -400,7 +404,7 @@ Verify:
   - Cannot see web-logs-* data ✓
 ```
 
-8. Enable audit logging
+9. Enable audit logging
 
 > Audit logging records all authentication and authorization events — who accessed what, when, and the outcome (granted/denied). Essential for compliance.
 
@@ -409,7 +413,7 @@ sudo sed -i '$ a\xpack.security.audit.enabled: true' /etc/elasticsearch/elastics
 sudo systemctl restart elasticsearch
 ```
 
-9. Review audit logs
+10. Review audit logs
 
 ```bash
 sudo tail -20 /var/log/elasticsearch/*_audit.json | head -40
@@ -441,7 +445,7 @@ code ~/module06-pipeline-web.conf
 
 Paste this content:
 
-> This pipeline reads web access logs, parses them with grok, and indexes into `web-logs-advanced-*`. The `user` and `password` must match the `elastic` credentials from Lab 7.
+> This pipeline reads web access logs, parses them with grok, and indexes into `web-logs-advanced-*`. The `user` and `password` must match the `elastic` credentials from Lab 7. The password is stored in the Logstash keystore (configured in step 3).
 
 ```conf
 input {
@@ -466,10 +470,12 @@ filter {
 
 output {
   elasticsearch {
-    hosts => ["http://127.0.0.1:9200"]
+    hosts => ["https://127.0.0.1:9200"]
+    ssl => true
+    ssl_certificate_verification => false
     index => "web-logs-advanced-%{+YYYY.MM.dd}"
     user => "elastic"
-    password => "Training123!"
+    password => "${ELASTIC_PASSWORD}"
   }
 }
 ```
@@ -504,10 +510,12 @@ filter {
 
 output {
   elasticsearch {
-    hosts => ["http://127.0.0.1:9200"]
+    hosts => ["https://127.0.0.1:9200"]
+    ssl => true
+    ssl_certificate_verification => false
     index => "app-logs-advanced-%{+YYYY.MM.dd}"
     user => "elastic"
-    password => "Training123!"
+    password => "${ELASTIC_PASSWORD}"
   }
 }
 ```
@@ -519,7 +527,18 @@ sudo cp ~/module06-pipeline-web.conf /etc/logstash/pipelines/web.conf
 sudo cp ~/module06-pipeline-app.conf /etc/logstash/pipelines/app.conf
 ```
 
-5. Configure pipelines.yml
+5. Store Elasticsearch password in Logstash keystore
+
+> Logstash keystore securely stores sensitive values like passwords. The `${ELASTIC_PASSWORD}` variable in the pipeline configs references this keystore entry.
+
+```bash
+sudo /usr/share/logstash/bin/logstash-keystore create
+sudo /usr/share/logstash/bin/logstash-keystore add ELASTIC_PASSWORD
+```
+
+> Enter the `elastic` user password when prompted.
+
+6. Configure pipelines.yml
 
 > `pipelines.yml` is the master config that tells Logstash which pipelines to run. Each entry defines a pipeline ID, config path, and optional settings like queue type and workers.
 
@@ -548,7 +567,7 @@ Paste this content:
 sudo cp ~/module06-pipelines.yml /etc/logstash/pipelines.yml
 ```
 
-6. Enable persistent queue storage
+7. Enable persistent queue storage
 
 > Persistent queues need a dedicated data directory. Logstash writes incoming events here before filter processing — acts as a buffer.
 
@@ -557,13 +576,21 @@ sudo mkdir -p /var/lib/logstash/queue
 sudo chown logstash:logstash /var/lib/logstash/queue
 ```
 
-7. Restart Logstash
+8. Validate configuration
+
+> Always validate Logstash configuration before restarting to catch syntax errors early.
+
+```bash
+sudo -u logstash /usr/share/logstash/bin/logstash --path.settings /etc/logstash -t
+```
+
+9. Restart Logstash
 
 ```bash
 sudo systemctl restart logstash
 ```
 
-8. Monitor pipeline status via API
+10. Monitor pipeline status via API
 
 > Logstash exposes a monitoring API on port 9600. `_node/pipelines` shows each pipeline's status, event throughput, and filter performance.
 
@@ -571,7 +598,7 @@ sudo systemctl restart logstash
 curl -s http://127.0.0.1:9600/_node/pipelines?pretty
 ```
 
-9. Kibana: Verify both pipelines
+11. Kibana: Verify both pipelines
 
 ```
 Menu (☰) → Management → Dev Tools
