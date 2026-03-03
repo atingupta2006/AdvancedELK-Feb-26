@@ -115,5 +115,63 @@ sudo sed -i '/cluster.initial_master_nodes/d' /etc/elasticsearch/elasticsearch.y
 | Nodes not joining | Check `discovery.seed_hosts` has all 3 IPs with `:9300` |
 | Connection refused on 9300 | Ensure `network.host: 0.0.0.0`, no `discovery.type: single-node` |
 | `master_not_discovered` | Start node-1 first; wait for 9200 response before others |
+| Every node shows as master | Old data not cleared — see **"Fix: Every Node is Master"** below |
 | Cluster red | Clear all 3 data dirs and re-form |
 | Check logs | `sudo journalctl -u elasticsearch -n 100 --no-pager` |
+
+---
+
+### Fix: Every Node is Master (Split-Brain)
+
+If `_cat/nodes` shows each node as its own master (`*`), each node bootstrapped a separate cluster.
+
+**1. Stop all 3 nodes**
+
+```bash
+sudo systemctl stop elasticsearch
+```
+
+**2. Check config — remove `discovery.type: single-node`**
+
+```bash
+# This should return NOTHING:
+grep "discovery.type" /etc/elasticsearch/elasticsearch.yml
+
+# If it returns a line, delete it from the file
+```
+
+**3. Clear data on ALL 3 nodes** (this is the key step)
+
+```bash
+sudo rm -rf /var/lib/elasticsearch/*
+sudo chown -R elasticsearch:elasticsearch /var/lib/elasticsearch
+```
+
+**4. Test connectivity between nodes**
+
+```bash
+# From node-1, verify you can reach the others:
+curl -s http://10.0.20.26:9200
+curl -s http://10.0.20.23:9200
+```
+
+**5. Start node-1 FIRST, wait, then start others**
+
+```bash
+# On node-1 (10.0.20.20) ONLY:
+sudo systemctl start elasticsearch
+
+# Wait 30s, confirm it's up:
+curl -s http://127.0.0.1:9200/_cluster/health?pretty
+
+# THEN start node-2 and node-3:
+sudo systemctl start elasticsearch
+```
+
+**6. Verify — only ONE master**
+
+```bash
+curl -s http://10.0.20.20:9200/_cat/nodes?v
+```
+
+You should see 3 rows, with only **one** node marked with `*` (master).
