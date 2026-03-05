@@ -150,6 +150,9 @@ sudo mkdir -p /opt/logstash/drivers
 cd /opt/logstash/drivers
 sudo curl -L -O https://repo1.maven.org/maven2/org/xerial/sqlite-jdbc/3.45.0.0/sqlite-jdbc-3.45.0.0.jar
 
+# Fix permissions so logstash user can access the driver
+sudo chown -R logstash:logstash /opt/logstash/
+
 # Verify download
 ls -lh sqlite-jdbc-*.jar
 ```
@@ -173,7 +176,14 @@ EOF
 sudo chmod 644 /var/log/app/access.log
 ```
 
-8. Create Logstash configuration with JDBC enrichment
+8. Install JDBC streaming plugin
+
+```bash
+# Install the jdbc_streaming filter plugin (may already be installed in standard distribution)
+sudo /usr/share/logstash/bin/logstash-plugin install logstash-filter-jdbc_streaming
+```
+
+9. Create Logstash configuration with JDBC enrichment
 
 ```bash
 sudo tee /etc/logstash/conf.d/jdbc-enrichment.conf > /dev/null << 'EOF'
@@ -191,7 +201,7 @@ filter {
   jdbc_streaming {
     jdbc_driver_library => "/opt/logstash/drivers/sqlite-jdbc-3.45.0.0.jar"
     jdbc_driver_class => "org.sqlite.JDBC"
-    jdbc_connection_string => "jdbc:sqlite:/opt/logstash/data/users.db"
+    jdbc_connection_string => "jdbc:sqlite:/opt/logstash/data/users.db?mode=ro"
     jdbc_user => ""  # SQLite doesn't require user/password for file database
     jdbc_password => ""
     statement => "SELECT name, department, location, email FROM users WHERE user_id = :uid"
@@ -235,19 +245,41 @@ output {
 EOF
 ```
 
-9. Run Logstash with JDBC enrichment
+10. Run Logstash with JDBC enrichment
+
+> **Important**: Logstash cannot run as the `root` user (superuser). You have two options:
+> - **Option A** (Testing): Run as a regular user with file access
+> - **Option B** (Production): Use the systemd service which runs as the `logstash` user
+
+**Option A — Test manually as logstash user:**
 
 ```bash
-# Test configuration first
-sudo /usr/share/logstash/bin/logstash -f /etc/logstash/conf.d/jdbc-enrichment.conf --config.test_and_exit
+# Switch to logstash user and test configuration
+sudo -u logstash /usr/share/logstash/bin/logstash -f /etc/logstash/conf.d/jdbc-enrichment.conf --config.test_and_exit
 
 # Run Logstash (Ctrl+C to stop after processing)
-sudo /usr/share/logstash/bin/logstash -f /etc/logstash/conf.d/jdbc-enrichment.conf
+sudo -u logstash /usr/share/logstash/bin/logstash -f /etc/logstash/conf.d/jdbc-enrichment.conf
 ```
 
-> Watch the console output. You should see enriched documents with `user_info` containing name, department, location, and email for known user IDs (U12345-U12352). User ID U99999 will have `enriched: false` and `unknown_user` tag.
+**Option B — Use systemd service (Recommended for labs):**
 
-10. Verify enrichment in Elasticsearch
+```bash
+# Start the Logstash service (it will automatically run as logstash user)
+sudo systemctl start logstash
+
+# View logs in real-time
+sudo journalctl -u logstash -f
+
+# Verify the service started successfully
+sudo systemctl status logstash
+
+# Stop when done
+sudo systemctl stop logstash
+```
+
+> Watch the output. You should see enriched documents with `user_info` containing name, department, location, and email for known user IDs (U12345-U12352). User ID U99999 will have `enriched: false` and `unknown_user` tag.
+
+11. Verify enrichment in Elasticsearch
 
 ```
 Menu (☰) → Management → Dev Tools
@@ -297,7 +329,7 @@ GET enriched-logs-*/_search
 }
 ```
 
-11. Understand the enrichment results
+12. Understand the enrichment results
 
 > **Before enrichment**:
 > ```json
@@ -328,7 +360,7 @@ GET enriched-logs-*/_search
 > }
 > ```
 >
-> **Note**: `jdbc_streaming` returns results as an array. For unknown users, `user_info` will be an empty array `[]`.
+> **Note**: `jdbc_streaming` returns results as an array. For unknown users, `user_info` will be an empty array `[]`. The `?mode=ro` in the connection string opens SQLite in read-only mode, which is a best practice for preventing accidental data modifications during training.
 
 > **Performance considerations**:
 > - `cache_size` (1000) and `cache_expiration` (300 seconds = 5 minutes) prevent querying the database for every event with the same user_id
@@ -341,7 +373,7 @@ GET enriched-logs-*/_search
 
 ### Part 3: Ingestion Tool Comparison
 
-12. Review the comparison matrix
+13. Review the comparison matrix
 
 > When designing ingestion architecture, choose the right tool for the job:
 
@@ -400,16 +432,18 @@ Host URL: https://127.0.0.1:8220
 > **Important**: The agent version **must exactly match** your Elasticsearch version. Check your version first:
 
 ```bash
-curl -s http://127.0.0.1:9200 | jq -r .version.number
+ES_VERSION=$(curl -s http://127.0.0.1:9200 | jq -r .version.number)
+echo "Using Elasticsearch version: $ES_VERSION"
 ```
 
-> Now download the matching Elastic Agent version. Replace `9.0.0` below with your actual version:
+> Now download the matching Elastic Agent version:
 
 ```bash
+ES_VERSION=$(curl -s http://127.0.0.1:9200 | jq -r .version.number)
 cd /tmp
-curl -L -O https://artifacts.elastic.co/downloads/beats/elastic-agent/elastic-agent-9.0.0-linux-x86_64.tar.gz
-tar xzf elastic-agent-9.0.0-linux-x86_64.tar.gz
-cd elastic-agent-9.0.0-linux-x86_64
+curl -L -O https://artifacts.elastic.co/downloads/beats/elastic-agent/elastic-agent-${ES_VERSION}-linux-x86_64.tar.gz
+tar xzf elastic-agent-${ES_VERSION}-linux-x86_64.tar.gz
+cd elastic-agent-${ES_VERSION}-linux-x86_64
 ```
 
 > The enrollment command is generated by Kibana's Fleet UI. **Go to Fleet UI now** and copy the exact command shown — it contains the Fleet Server URL and enrollment token.
@@ -583,7 +617,7 @@ Menu (☰) → Management → Dev Tools
 ```
 
 ```json
-POST _query
+POST /_query
 {
   "query": "FROM web-logs-* | STATS count = COUNT(*) BY status | SORT count DESC"
 }
