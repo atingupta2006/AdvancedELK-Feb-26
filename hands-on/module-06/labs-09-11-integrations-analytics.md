@@ -12,8 +12,6 @@
 
 ### Part 1: Kafka Integration Architecture (Conceptual + Config Walkthrough)
 
-> **Note**: Setting up a full Kafka cluster is outside the scope of this training environment. This section walks through the configuration patterns so you can recognize and build them in production.
-
 1. Understand the Kafka-ELK architecture
 
 ```
@@ -76,9 +74,11 @@ output {
 > | Parameter | Purpose |
 > |-----------|---------|
 > | `bootstrap_servers` | Kafka broker addresses for initial connection |
-> | `group_id` | Consumer group — Kafka tracks offsets per group for exactly-once delivery |
+> | `group_id` | Consumer group — Kafka tracks offsets per group for at-least-once delivery |
 > | `consumer_threads` | Parallelism — match to the number of Kafka partitions |
 > | `decorate_events` | Adds `@metadata[kafka]` fields (topic, partition, offset) for routing |
+
+> **Note**: Kafka with Logstash provides **at-least-once delivery semantics**. Kafka tracks consumer group offsets, but Logstash may reprocess messages on restart or failure, so messages may be delivered more than once.
 
 3. Review Kafka output configuration for Filebeat
 
@@ -95,46 +95,259 @@ output.kafka:
   compression: gzip
 ```
 
-### Part 2: JDBC Enrichment Pattern
+### Part 2: JDBC Enrichment Pattern (Hands-On)
 
 4. Understand the JDBC enrichment use case
 
 > **Scenario**: Your logs contain `user_id: "U12345"` but no user name, department, or location. A relational database has this mapping. The `jdbc_streaming` filter enriches each event in real-time by querying the database.
 
-5. Review JDBC filter configuration
+> In this lab, we'll use **SQLite** (an in-memory/file-based database) to demonstrate JDBC enrichment without needing external database setup.
 
-```conf
-# Logstash JDBC Enrichment Pattern (reference)
+5. Install SQLite and create database with sample user data
+
+```bash
+# Install SQLite (if not already installed)
+sudo dnf install sqlite -y
+# For Ubuntu/Debian: sudo apt install sqlite3 -y
+
+# Create directory for database
+sudo mkdir -p /opt/logstash/data
+cd /opt/logstash/data
+
+# Create SQLite database with sample users
+sqlite3 users.db << 'EOF'
+CREATE TABLE users (
+  user_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  department TEXT NOT NULL,
+  location TEXT NOT NULL,
+  email TEXT
+);
+
+INSERT INTO users (user_id, name, department, location, email) VALUES
+  ('U12345', 'Alice Johnson', 'Engineering', 'New York', 'alice.j@company.com'),
+  ('U12346', 'Bob Smith', 'Marketing', 'San Francisco', 'bob.s@company.com'),
+  ('U12347', 'Carol White', 'Engineering', 'Austin', 'carol.w@company.com'),
+  ('U12348', 'David Brown', 'Finance', 'Chicago', 'david.b@company.com'),
+  ('U12349', 'Eve Davis', 'Operations', 'Seattle', 'eve.d@company.com'),
+  ('U12350', 'Frank Miller', 'Engineering', 'Boston', 'frank.m@company.com'),
+  ('U12351', 'Grace Lee', 'HR', 'Denver', 'grace.l@company.com'),
+  ('U12352', 'Henry Wilson', 'Sales', 'Miami', 'henry.w@company.com');
+
+SELECT 'Database created with ' || COUNT(*) || ' users' FROM users;
+.quit
+EOF
+
+# Verify data
+sqlite3 users.db "SELECT * FROM users LIMIT 3;"
+```
+
+6. Download SQLite JDBC driver
+
+```bash
+# Download SQLite JDBC driver
+sudo mkdir -p /opt/logstash/drivers
+cd /opt/logstash/drivers
+sudo curl -L -O https://repo1.maven.org/maven2/org/xerial/sqlite-jdbc/3.45.0.0/sqlite-jdbc-3.45.0.0.jar
+
+# Verify download
+ls -lh sqlite-jdbc-*.jar
+```
+
+7. Create test log file with user IDs
+
+```bash
+# Create sample access logs with user IDs
+sudo mkdir -p /var/log/app
+sudo tee /var/log/app/access.log > /dev/null << 'EOF'
+{"timestamp":"2026-03-05T10:15:23Z","user_id":"U12345","action":"login","status":"success"}
+{"timestamp":"2026-03-05T10:16:45Z","user_id":"U12346","action":"purchase","status":"success","amount":49.99}
+{"timestamp":"2026-03-05T10:17:12Z","user_id":"U12347","action":"view_page","status":"success","page":"/products"}
+{"timestamp":"2026-03-05T10:18:33Z","user_id":"U12348","action":"download","status":"success","file":"report.pdf"}
+{"timestamp":"2026-03-05T10:19:01Z","user_id":"U99999","action":"login","status":"failed"}
+{"timestamp":"2026-03-05T10:20:15Z","user_id":"U12349","action":"logout","status":"success"}
+{"timestamp":"2026-03-05T10:21:47Z","user_id":"U12350","action":"api_call","status":"success","endpoint":"/api/v1/data"}
+EOF
+
+# Make readable
+sudo chmod 644 /var/log/app/access.log
+```
+
+8. Create Logstash configuration with JDBC enrichment
+
+```bash
+sudo tee /etc/logstash/conf.d/jdbc-enrichment.conf > /dev/null << 'EOF'
+input {
+  file {
+    path => "/var/log/app/access.log"
+    start_position => "beginning"
+    sincedb_path => "/dev/null"  # Always read from start for testing
+    codec => json
+  }
+}
+
 filter {
+  # JDBC Streaming lookup to enrich user data
   jdbc_streaming {
-    jdbc_driver_library => "/opt/logstash/drivers/mysql-connector-java.jar"
-    jdbc_driver_class => "com.mysql.cj.jdbc.Driver"
-    jdbc_connection_string => "jdbc:mysql://db-host:3306/users_db"
-    jdbc_user => "readonly_user"
-    jdbc_password => "${DB_PASSWORD}"
-    statement => "SELECT name, department, location FROM users WHERE user_id = :uid"
+    jdbc_driver_library => "/opt/logstash/drivers/sqlite-jdbc-3.45.0.0.jar"
+    jdbc_driver_class => "org.sqlite.JDBC"
+    jdbc_connection_string => "jdbc:sqlite:/opt/logstash/data/users.db"
+    jdbc_user => ""  # SQLite doesn't require user/password for file database
+    jdbc_password => ""
+    statement => "SELECT name, department, location, email FROM users WHERE user_id = :uid"
     parameters => { "uid" => "user_id" }
     target => "user_info"
+    
+    # Performance tuning - cache results to reduce database queries
     cache_size => 1000
-    cache_expiration => 300
+    cache_expiration => 300  # Cache entries expire after 300 seconds (5 minutes)
+  }
+  
+  # Add a flag for enriched vs non-enriched events
+  # jdbc_streaming creates an empty array when no results found, so check if array has elements
+  if [user_info] and [user_info][0] {
+    mutate {
+      add_field => { "enriched" => "true" }
+    }
+  } else {
+    # User not found in database (user_info is [] or doesn't exist)
+    mutate {
+      add_field => { "enriched" => "false" }
+      add_tag => ["unknown_user", "jdbc_lookup_failed"]
+    }
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["http://127.0.0.1:9200"]
+    index => "enriched-logs-%{+YYYY.MM.dd}"
+    user => "elastic"
+    password => "${ELASTIC_PASSWORD}"
+    # Remove user/password lines if security is disabled (xpack.security.enabled=false)
+  }
+  
+  # Debug output to console
+  stdout {
+    codec => rubydebug
+  }
+}
+EOF
+```
+
+9. Run Logstash with JDBC enrichment
+
+```bash
+# Test configuration first
+sudo /usr/share/logstash/bin/logstash -f /etc/logstash/conf.d/jdbc-enrichment.conf --config.test_and_exit
+
+# Run Logstash (Ctrl+C to stop after processing)
+sudo /usr/share/logstash/bin/logstash -f /etc/logstash/conf.d/jdbc-enrichment.conf
+```
+
+> Watch the console output. You should see enriched documents with `user_info` containing name, department, location, and email for known user IDs (U12345-U12352). User ID U99999 will have `enriched: false` and `unknown_user` tag.
+
+10. Verify enrichment in Elasticsearch
+
+```
+Menu (☰) → Management → Dev Tools
+```
+
+```json
+# Check enriched documents
+GET enriched-logs-*/_search
+{
+  "size": 3,
+  "query": {
+    "term": { "enriched": "true" }
+  },
+  "_source": ["user_id", "action", "user_info", "enriched"]
+}
+```
+
+```json
+# Find documents with unknown users
+GET enriched-logs-*/_search
+{
+  "query": {
+    "term": { "enriched": "false" }
   }
 }
 ```
 
+```json
+# Aggregation: count actions by department
+GET enriched-logs-*/_search
+{
+  "size": 0,
+  "aggs": {
+    "by_department": {
+      "terms": {
+        "field": "user_info.department.keyword"
+      },
+      "aggs": {
+        "actions": {
+          "terms": {
+            "field": "action.keyword"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+11. Understand the enrichment results
+
+> **Before enrichment**:
+> ```json
+> {
+>   "timestamp": "2026-03-05T10:15:23Z",
+>   "user_id": "U12345",
+>   "action": "login",
+>   "status": "success"
+> }
+> ```
+
+> **After enrichment**:
+> ```json
+> {
+>   "timestamp": "2026-03-05T10:15:23Z",
+>   "user_id": "U12345",
+>   "action": "login",
+>   "status": "success",
+>   "user_info": [
+>     {
+>       "name": "Alice Johnson",
+>       "department": "Engineering",
+>       "location": "New York",
+>       "email": "alice.j@company.com"
+>     }
+>   ],
+>   "enriched": "true"
+> }
+> ```
+>
+> **Note**: `jdbc_streaming` returns results as an array. For unknown users, `user_info` will be an empty array `[]`.
+
 > **Performance considerations**:
-> - `cache_size` and `cache_expiration` prevent hammering the database on every event
-> - Use a read-only database user
-> - Consider a materialized view or replica for lookup tables
+> - `cache_size` (1000) and `cache_expiration` (300 seconds = 5 minutes) prevent querying the database for every event with the same user_id
+> - First lookup for each user_id hits the database; subsequent lookups within 5 minutes use cached results
+> - Use conditional logic (`if [user_info] and [user_info][0]`) to identify and handle lookup failures (jdbc_streaming returns empty array when no results found)
+> - For production with MySQL/PostgreSQL, use a read-only database user
+> - Consider a materialized view or replica for lookup tables to avoid impacting production databases
+
+**Success**: Logs are enriched with user information from SQLite database, demonstrating real-time JDBC enrichment patterns.
 
 ### Part 3: Ingestion Tool Comparison
 
-6. Review the comparison matrix
+12. Review the comparison matrix
 
 > When designing ingestion architecture, choose the right tool for the job:
 
 | Feature | **Filebeat** | **Logstash** | **Fluent Bit** | **Elastic Agent** |
 |---------|-------------|-------------|----------------|-------------------|
-| **Weight** | ~30 MB RAM | ~500 MB+ RAM | ~5 MB RAM | ~100 MB RAM |
+| **Weight** | ~20–80 MB RAM | ~1 GB+ RAM (JVM recommended) | ~5–15 MB RAM | ~150–300 MB RAM |
 | **Parsing** | Basic (modules) | Advanced (grok, dissect, ruby) | Moderate (parsers) | Via integrations |
 | **Buffering** | Disk-backed registry | Persistent queues | In-memory + disk | Fleet-managed |
 | **Use case** | Ship logs from servers | Heavy parsing, routing, enrichment | Kubernetes sidecar, IoT | Unified agent, Fleet-managed |
@@ -174,11 +387,23 @@ Menu (☰) → Management → Fleet
 ```
 Fleet → Settings → Add Fleet Server
 Host URL: https://127.0.0.1:8220
-
-Follow the enrollment instructions shown in Kibana UI
 ```
 
+> **Important**: The Fleet UI generates **two different commands**:
+> - **Fleet Server installation command** — installs the Fleet Server itself
+> - **Agent enrollment command** — enrolls regular agents to Fleet
+>
+> Run the **Fleet Server command first**. Copy the exact command shown in the UI and keep it ready for the next step.
+
 3. Install Elastic Agent on the host
+
+> **Important**: The agent version **must exactly match** your Elasticsearch version. Check your version first:
+
+```bash
+curl -s http://127.0.0.1:9200 | jq -r .version.number
+```
+
+> Now download the matching Elastic Agent version. Replace `9.0.0` below with your actual version:
 
 ```bash
 cd /tmp
@@ -187,13 +412,13 @@ tar xzf elastic-agent-9.0.0-linux-x86_64.tar.gz
 cd elastic-agent-9.0.0-linux-x86_64
 ```
 
-> **Note**: Replace `9.0.0` with the version matching your installed Elastic Stack (`curl http://127.0.0.1:9200 | jq .version.number`).
-
-> The enrollment command is generated by Kibana's Fleet UI. Copy the exact command shown — it contains the Fleet Server URL and enrollment token.
+> The enrollment command is generated by Kibana's Fleet UI. **Go to Fleet UI now** and copy the exact command shown — it contains the Fleet Server URL and enrollment token.
 
 ```bash
 sudo ./elastic-agent install --url=<FLEET_SERVER_URL> --enrollment-token=<TOKEN>
 ```
+
+> The Fleet Server will start automatically after installation. Wait 10-20 seconds before enrolling additional agents.
 
 4. Verify agent enrollment
 
@@ -228,7 +453,19 @@ Try data views:
   metrics-system.*
 ```
 
-> Elastic Agent indexes into `logs-*` and `metrics-*` data streams by default (ECS-formatted). This is different from Filebeat/Metricbeat's `filebeat-*`/`metricbeat-*` patterns.
+> Elastic Agent writes to **data streams** following the pattern:
+> ```
+> logs-<dataset>-<namespace>
+> metrics-<dataset>-<namespace>
+> ```
+>
+> Examples:
+> - `logs-system.auth-default`
+> - `logs-system.syslog-default`
+> - `metrics-system.cpu-default`
+> - `metrics-system.memory-default`
+>
+> This is different from traditional indices like `filebeat-*` or `metricbeat-*`. Data streams provide better lifecycle management and performance for time-series data.
 
 7. Review agent metrics
 
