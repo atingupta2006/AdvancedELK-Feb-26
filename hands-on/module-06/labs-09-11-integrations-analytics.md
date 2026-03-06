@@ -8,7 +8,7 @@
 
 **Objective**: Understand Kafka integration patterns, JDBC enrichment, and compare ingestion tools
 
-> Production ELK deployments rarely use direct Filebeat→Elasticsearch flows. A **message broker** (Kafka) sits between producers and consumers, providing buffering, replay, and decoupling. This lab covers the architecture and demonstrates JDBC enrichment patterns.
+> Production ELK deployments rarely ingest logs directly from Filebeat to Elasticsearch. A **message broker** (Kafka) sits between producers and consumers, providing buffering, replay, and decoupling. This lab covers that architecture and walks through JDBC enrichment hands-on.
 
 ### Part 1: Kafka Integration Architecture (Conceptual + Config Walkthrough)
 
@@ -78,7 +78,7 @@ output {
 > | `consumer_threads` | Parallelism — match to the number of Kafka partitions |
 > | `decorate_events` | Adds `@metadata[kafka]` fields (topic, partition, offset) for routing |
 
-> **Note**: Kafka with Logstash provides **at-least-once delivery semantics**. Kafka tracks consumer group offsets, but Logstash may reprocess messages on restart or failure, so messages may be delivered more than once.
+> **Note**: Kafka with Logstash gives you **at-least-once delivery**. Kafka tracks consumer group offsets, but Logstash may reprocess messages on restart, so duplicates are possible.
 
 3. Review Kafka output configuration for Filebeat
 
@@ -101,7 +101,23 @@ output.kafka:
 
 > **Scenario**: Your logs contain `user_id: "U12345"` but no user name, department, or location. A relational database has this mapping. The `jdbc_streaming` filter enriches each event in real-time by querying the database.
 
-> In this lab, we'll use **SQLite** (an in-memory/file-based database) to demonstrate JDBC enrichment without needing external database setup.
+```
+┌──────────────┐     ┌───────────┐     ┌──────────────┐     ┌──────────────┐
+│  Log file    │────▶│ Logstash  │────▶│ Elasticsearch│────▶│   Kibana     │
+│ (access.log) │     │  (filter) │     │  (storage)   │     │ (dashboards) │
+└──────────────┘     └─────┬─────┘     └──────────────┘     └──────────────┘
+                           │
+                    jdbc_streaming
+                     lookup per
+                      event
+                           │
+                     ┌─────▼─────┐
+                     │  SQLite   │
+                     │ users.db  │
+                     └───────────┘
+```
+
+> In this lab, we use **SQLite** (a file-based database) to demonstrate JDBC enrichment without needing external database setup.
 
 5. Install SQLite and create database with sample user data
 
@@ -112,10 +128,9 @@ sudo dnf install sqlite -y
 
 # Create directory for database
 sudo mkdir -p /opt/logstash/data
-cd /opt/logstash/data
 
-# Create SQLite database with sample users
-sqlite3 users.db << 'EOF'
+# Create SQLite database with sample users (sudo required — directory is root-owned)
+sudo sqlite3 /opt/logstash/data/users.db << 'EOF'
 CREATE TABLE users (
   user_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -139,7 +154,7 @@ SELECT 'Database created with ' || COUNT(*) || ' users' FROM users;
 EOF
 
 # Verify data
-sqlite3 users.db "SELECT * FROM users LIMIT 3;"
+sqlite3 /opt/logstash/data/users.db "SELECT * FROM users LIMIT 3;"
 ```
 
 6. Download SQLite JDBC driver
@@ -176,14 +191,25 @@ EOF
 sudo chmod 644 /var/log/app/access.log
 ```
 
-8. Install JDBC streaming plugin
+8. Verify JDBC streaming plugin is available
 
 ```bash
-# Install the jdbc_streaming filter plugin (may already be installed in standard distribution)
-sudo /usr/share/logstash/bin/logstash-plugin install logstash-filter-jdbc_streaming
+# The jdbc_streaming filter plugin is bundled with Logstash 9.x
+# Verify it is available:
+sudo /usr/share/logstash/bin/logstash-plugin list | grep jdbc_streaming
+
+# If not listed (older Logstash versions), install it:
+# sudo /usr/share/logstash/bin/logstash-plugin install logstash-filter-jdbc_streaming
 ```
 
 9. Create Logstash configuration with JDBC enrichment
+
+> **Important — Pipeline architecture on this VM**:
+> All `.conf` files in `/etc/logstash/conf.d/` are merged into a **single pipeline**. The existing `elk-training.conf` already defines an Elasticsearch output that routes events by the `index_prefix` field:
+> ```
+> index => "%{[index_prefix]}-%{+YYYY.MM.dd}"
+> ```
+> So `jdbc-enrichment.conf` only needs input + filter + stdout output. The ES indexing happens automatically through `elk-training.conf`'s output when we set `index_prefix => "enriched-logs"`.
 
 ```bash
 sudo tee /etc/logstash/conf.d/jdbc-enrichment.conf > /dev/null << 'EOF'
@@ -201,92 +227,108 @@ filter {
   jdbc_streaming {
     jdbc_driver_library => "/opt/logstash/drivers/sqlite-jdbc-3.45.0.0.jar"
     jdbc_driver_class => "org.sqlite.JDBC"
-    jdbc_connection_string => "jdbc:sqlite:/opt/logstash/data/users.db?mode=ro"
+    jdbc_connection_string => "jdbc:sqlite:/opt/logstash/data/users.db"
     jdbc_user => ""  # SQLite doesn't require user/password for file database
     jdbc_password => ""
     statement => "SELECT name, department, location, email FROM users WHERE user_id = :uid"
     parameters => { "uid" => "user_id" }
     target => "user_info"
-    
+
     # Performance tuning - cache results to reduce database queries
     cache_size => 1000
     cache_expiration => 300  # Cache entries expire after 300 seconds (5 minutes)
   }
-  
-  # Add a flag for enriched vs non-enriched events
-  # jdbc_streaming creates an empty array when no results found, so check if array has elements
-  if [user_info] and [user_info][0] {
-    mutate {
-      add_field => { "enriched" => "true" }
-    }
-  } else {
-    # User not found in database (user_info is [] or doesn't exist)
+
+  # Check for JDBC connection/query failures first
+  if "_jdbcstreamingfailure" in [tags] {
     mutate {
       add_field => { "enriched" => "false" }
-      add_tag => ["unknown_user", "jdbc_lookup_failed"]
+      add_tag => ["jdbc_lookup_failed"]
+      add_field => { "index_prefix" => "enriched-logs" }
+    }
+  }
+  # Successful lookup — user_info array has at least one result with a name field
+  else if [user_info] and [user_info][0] and [user_info][0][name] {
+    mutate {
+      add_field => { "enriched" => "true" }
+      add_field => { "index_prefix" => "enriched-logs" }
+    }
+  }
+  # User not found in database (user_info is [] or fields are empty)
+  else {
+    mutate {
+      add_field => { "enriched" => "false" }
+      add_tag => ["unknown_user"]
+      add_field => { "index_prefix" => "enriched-logs" }
     }
   }
 }
 
+# elk-training.conf already defines the Elasticsearch output using %{[index_prefix]}.
+# Keep only stdout here to avoid duplicate indexing when conf.d files are merged.
 output {
-  elasticsearch {
-    hosts => ["http://127.0.0.1:9200"]
-    index => "enriched-logs-%{+YYYY.MM.dd}"
-    user => "elastic"
-    password => "${ELASTIC_PASSWORD}"
-    # Remove user/password lines if security is disabled (xpack.security.enabled=false)
-  }
-  
-  # Debug output to console
-  stdout {
-    codec => rubydebug
-  }
+  stdout { codec => rubydebug }
 }
 EOF
 ```
 
-10. Run Logstash with JDBC enrichment
+> **Note on the connection string**: Do **not** append `?mode=ro` to the SQLite JDBC URL. The Sequel library used by Logstash's jdbc_streaming plugin does not support SQLite URI parameters — adding `?mode=ro` causes Sequel to open a blank in-memory database instead of the actual file, resulting in `[SQLITE_ERROR] no such table: users`. Use the plain path: `jdbc:sqlite:/opt/logstash/data/users.db`.
 
-> **Important**: Logstash cannot run as the `root` user (superuser). You have two options:
-> - **Option A** (Testing): Run as a regular user with file access
-> - **Option B** (Production): Use the systemd service which runs as the `logstash` user
+10. Validate and run Logstash with JDBC enrichment
 
-**Option A — Test manually as logstash user:**
+> **Important**: The Logstash service loads **all** `.conf` files in `/etc/logstash/conf.d/` as a single pipeline. You cannot run a single config file with `-f` while the service is running — the service holds a lock on the data directory.
+
+First, validate the configuration:
 
 ```bash
-# Switch to logstash user and test configuration
-sudo -u logstash /usr/share/logstash/bin/logstash -f /etc/logstash/conf.d/jdbc-enrichment.conf --config.test_and_exit
-
-# Run Logstash (Ctrl+C to stop after processing)
-sudo -u logstash /usr/share/logstash/bin/logstash -f /etc/logstash/conf.d/jdbc-enrichment.conf
+# Test configuration syntax (stop the service first to release the lock)
+sudo systemctl stop logstash
+sudo -u logstash /usr/share/logstash/bin/logstash \
+  --config.test_and_exit \
+  -f /etc/logstash/conf.d/ \
+  --path.data /var/lib/logstash
 ```
 
-**Option B — Use systemd service (Recommended for labs):**
+> Expected output: `Configuration OK`
+
+Now start the service to run the full pipeline:
 
 ```bash
-# Start the Logstash service (it will automatically run as logstash user)
-sudo systemctl start logstash
+# Restart Logstash — it will load both elk-training.conf and jdbc-enrichment.conf
+sudo systemctl restart logstash
 
-# View logs in real-time
+# View logs in real-time (Ctrl+C to stop watching)
 sudo journalctl -u logstash -f
 
 # Verify the service started successfully
 sudo systemctl status logstash
-
-# Stop when done
-sudo systemctl stop logstash
 ```
+
+> **What to watch for in the logs:**
+> - `Pipeline started` — pipeline is running
+> - `Connected to ES instance` — Elasticsearch output is connected
+> - Enriched events printed to stdout via `rubydebug` codec
+> - No `SQLITE_ERROR` or `_jdbcstreamingfailure` warnings
 
 > Watch the output. You should see enriched documents with `user_info` containing name, department, location, and email for known user IDs (U12345-U12352). User ID U99999 will have `enriched: false` and `unknown_user` tag.
 
 11. Verify enrichment in Elasticsearch
+
+You can verify via Kibana Dev Tools or directly with `curl` from the command line:
 
 ```
 Menu (☰) → Management → Dev Tools
 ```
 
 ```json
-# Check enriched documents
+# Check document count
+GET enriched-logs-*/_count
+```
+
+> Expected: **7 documents** (one per JSON line in access.log: 6 known users + 1 unknown user U99999).
+
+```json
+# Check enriched documents — should return users U12345-U12350
 GET enriched-logs-*/_search
 {
   "size": 3,
@@ -298,13 +340,30 @@ GET enriched-logs-*/_search
 ```
 
 ```json
-# Find documents with unknown users
+# Find documents with unknown users — should return U99999
 GET enriched-logs-*/_search
 {
   "query": {
     "term": { "enriched": "false" }
   }
 }
+```
+
+Alternatively, verify with `curl` from the terminal:
+
+```bash
+# Count documents
+curl -s http://192.168.56.101:9200/enriched-logs-*/_count | python3 -m json.tool
+
+# Check enriched documents
+curl -s 'http://192.168.56.101:9200/enriched-logs-*/_search?size=3&pretty' \
+  -H 'Content-Type: application/json' \
+  -d '{"query":{"term":{"enriched":"true"}},"_source":["user_id","action","user_info","enriched"]}'
+
+# Find unknown users
+curl -s 'http://192.168.56.101:9200/enriched-logs-*/_search?pretty' \
+  -H 'Content-Type: application/json' \
+  -d '{"query":{"term":{"enriched":"false"}}}'
 ```
 
 ```json
@@ -360,7 +419,7 @@ GET enriched-logs-*/_search
 > }
 > ```
 >
-> **Note**: `jdbc_streaming` returns results as an array. For unknown users, `user_info` will be an empty array `[]`. The `?mode=ro` in the connection string opens SQLite in read-only mode, which is a best practice for preventing accidental data modifications during training.
+> **Note**: `jdbc_streaming` returns results as an array. For unknown users, `user_info` will be an empty array `[]`.
 
 > **Performance considerations**:
 > - `cache_size` (1000) and `cache_expiration` (300 seconds = 5 minutes) prevent querying the database for every event with the same user_id
@@ -369,7 +428,7 @@ GET enriched-logs-*/_search
 > - For production with MySQL/PostgreSQL, use a read-only database user
 > - Consider a materialized view or replica for lookup tables to avoid impacting production databases
 
-**Success**: Logs are enriched with user information from SQLite database, demonstrating real-time JDBC enrichment patterns.
+At this point, your logs are enriched with user details from the SQLite database. The same pattern applies to MySQL, PostgreSQL, or any JDBC-compatible source.
 
 ### Part 3: Ingestion Tool Comparison
 
@@ -392,7 +451,7 @@ GET enriched-logs-*/_search
 > - **Kubernetes**: Fluent Bit (low resource footprint)
 > - **Centralized management**: Elastic Agent + Fleet
 
-**Success**: You understand Kafka integration patterns, JDBC enrichment, and can choose the right ingestion tool for a given scenario.
+That wraps up Lab 9. You've walked through Kafka architecture, hands-on JDBC enrichment, and compared ingestion tools for different use cases.
 
 ---
 
@@ -401,6 +460,28 @@ GET enriched-logs-*/_search
 **Objective**: Deploy and manage Elastic Agent via Fleet
 
 > **Elastic Agent** is a unified agent that replaces individual Beats (Filebeat, Metricbeat, etc.). **Fleet** is the centralized management UI in Kibana that handles agent policies, integrations, and upgrades. One agent, one config, managed from one place.
+
+```
+┌────────────────────────────────┐
+│           Kibana               │
+│     ┌──────────────┐           │
+│     │  Fleet UI    │           │
+│     │ (policies +  │           │
+│     │ integrations)│           │
+│     └──────┬───────┘           │
+└────────────┼───────────────────┘
+             │ manages
+             v
+┌────────────────────┐       ┌──────────────────┐
+│   Fleet Server     │◀──────│  Elastic Agent   │
+│ (coordination)     │       │  (on each host)  │
+└────────┬───────────┘       └────────┬─────────┘
+         │                            │
+         v                            v
+┌──────────────────┐       logs, metrics, etc.
+│  Elasticsearch   │◀────────────────┘
+└──────────────────┘
+```
 
 > **Prerequisite**: Lab 7 (Security) must be completed — Fleet requires authentication.
 
@@ -432,14 +513,14 @@ Host URL: https://127.0.0.1:8220
 > **Important**: The agent version **must exactly match** your Elasticsearch version. Check your version first:
 
 ```bash
-ES_VERSION=$(curl -s http://127.0.0.1:9200 | jq -r .version.number)
+ES_VERSION=$(curl -s http://192.168.56.101:9200 | jq -r .version.number)
 echo "Using Elasticsearch version: $ES_VERSION"
 ```
 
 > Now download the matching Elastic Agent version:
 
 ```bash
-ES_VERSION=$(curl -s http://127.0.0.1:9200 | jq -r .version.number)
+ES_VERSION=$(curl -s http://192.168.56.101:9200 | jq -r .version.number)
 cd /tmp
 curl -L -O https://artifacts.elastic.co/downloads/beats/elastic-agent/elastic-agent-${ES_VERSION}-linux-x86_64.tar.gz
 tar xzf elastic-agent-${ES_VERSION}-linux-x86_64.tar.gz
@@ -508,7 +589,7 @@ Fleet → Agents → Click agent name
 Review: Agent status, uptime, integrations active
 ```
 
-**Success**: Agent enrolled and reporting system logs + metrics to Elasticsearch
+If the agent shows `Healthy` and data appears in Discover, Lab 10 is complete.
 
 ---
 
@@ -516,7 +597,149 @@ Review: Agent status, uptime, integrations active
 
 **Objective**: Use ES|QL for data analysis and multi-step investigation workflows
 
-> **ES|QL** (Elasticsearch Query Language) is a piped query language — similar to Unix pipes or SPL (Splunk). Data flows through commands: `FROM` → `WHERE` → `STATS` → `SORT`. Unlike Query DSL (JSON), ES|QL is human-readable and designed for ad-hoc analysis.
+> **Prerequisite**: This lab queries `web-logs-*` and `app-logs-*` indices populated in **Module 02** (Filebeat + Logstash labs). If you skipped Module 02, those indices will be empty and queries will return no results.
+>
+> **Quick check** — run in Dev Tools before starting:
+> ```json
+> GET web-logs-*/_count
+> GET app-logs-*/_count
+> ```
+> If either returns `0` or `index_not_found`, complete Module 02 Labs 1-2 first, or substitute `enriched-logs-*` from Lab 9 to practice ES|QL syntax (adjust field names accordingly).
+
+> **ES|QL** (Elasticsearch Query Language) is a piped query language — think Unix pipes or Splunk's SPL. Data flows through commands: `FROM` → `WHERE` → `STATS` → `SORT`. Unlike Query DSL (JSON-based), ES|QL reads left-to-right and is built for ad-hoc investigation.
+
+### ES|QL Mental Model (Read This First)
+
+Think of ES|QL as a **left-to-right data pipeline**. Each command receives a table, transforms it, and passes a new table to the next.
+
+```
+Raw documents
+  |
+  v
+FROM index-pattern
+  |
+  v
+WHERE (row filtering)
+  |
+  v
+EVAL (new/calculated columns)
+  |
+  v
+STATS ... BY ... (group + aggregate)
+  |
+  v
+KEEP / RENAME (shape final output)
+  |
+  v
+SORT + LIMIT (presentation)
+```
+
+Practical rule:
+- Put **volume-reduction** commands early (`WHERE`, `LIMIT` for preview).
+- Put **expensive grouping** later (`STATS`) after filtering.
+- Put **presentation** commands at the end (`KEEP`, `SORT`, `LIMIT`).
+
+### ES|QL Statements and Concepts (Quick Reference)
+
+| Statement | Purpose | When to use it | Typical mistake |
+|-----------|---------|----------------|-----------------|
+| `FROM` | Select source indices/data streams | Always first command | Using a pattern that matches no data |
+| `WHERE` | Filter rows by conditions | Early in pipeline to reduce data | Comparing wrong field type (string vs number) |
+| `EVAL` | Create computed/derived fields | Categorization, normalization, flags | Reusing a field name unintentionally |
+| `STATS ... BY ...` | Aggregate metrics by group | Count/summarize patterns | Grouping by high-cardinality field accidentally |
+| `KEEP` | Keep only listed columns | Output cleanup for readability | Removing fields needed by later commands |
+| `SORT` | Order result rows | Highlight top/bottom values | Sorting text version of numeric fields |
+| `LIMIT` | Restrict returned rows | Preview queries and dashboards | Assuming `LIMIT` changes underlying data |
+
+### ES|QL Output Shape Flow
+
+Watch how the result shape changes at each stage:
+
+```
+START: Raw event rows (document-level)
+
+FROM web-logs-*
+  Output shape: many rows, many fields
+  Example row: {@timestamp, method, path, status, bytes, client_ip, ...}
+
+    |
+    v
+
+WHERE status >= 400
+  Output shape: fewer rows, same fields
+  Meaning: row filter only (no aggregation yet)
+
+    |
+    v
+
+EVAL is_server_error = status >= 500
+  Output shape: same row count, +1 new computed field
+  Meaning: enrichment inside query result only
+
+    |
+    v
+
+STATS error_count = COUNT(*) BY path
+  Output shape: grouped summary rows
+  Example row: {path, error_count}
+  Meaning: switched from event-level to aggregate-level
+
+    |
+    v
+
+SORT error_count DESC
+  Output shape: same grouped rows, ordered by importance
+
+    |
+    v
+
+LIMIT 10
+  Output shape: top 10 grouped rows (final investigation view)
+```
+
+Quick interpretation:
+- Before `STATS`: rows are usually individual events.
+- After `STATS`: rows are aggregate buckets.
+- Add `KEEP` before final `SORT`/`LIMIT` when you want a cleaner report-style output.
+
+### ES|QL Investigation Map
+
+Use this as a template when investigating incidents — each query answers one specific question.
+
+```
+Question: "Users report failed checkouts"
+         |
+         v
+    [Step 1: Scope the issue]
+    FROM app-logs-* | WHERE level == "ERROR"
+    | STATS error_count = COUNT(*) BY service
+         |
+         v
+    [Step 2: Find blast area]
+    FROM web-logs-* | WHERE status >= 500
+    | STATS error_count = COUNT(*) BY path
+         |
+         v
+    [Step 3: Collect evidence]
+    FROM app-logs-* | WHERE service == "payment-service"
+    | KEEP @timestamp, message, error, order_id
+    | SORT @timestamp DESC | LIMIT 20
+         |
+         v
+    [Step 4: Estimate impact]
+    FROM web-logs-* | WHERE status >= 500
+    | STATS affected_clients = COUNT_DISTINCT(client_ip)
+         |
+         v
+    Decision: mitigation + next focused query
+```
+
+### Reading ES|QL Results
+
+- `STATS COUNT(*) BY field` answers "how many events per category".
+- `COUNT_DISTINCT(field)` estimates uniqueness (users, hosts, IPs).
+- If `STATS` returns empty results, first verify your `FROM` pattern and `WHERE` time window/conditions.
+- For noisy incidents, add a narrow filter early (for example `service == "payment-service"`) before deeper analysis.
 
 ### Part A: ES|QL Core Skills
 
@@ -589,6 +812,11 @@ FROM web-logs-*
 
 > `EVAL` creates new computed columns from expressions. Useful for transformations, categorizations, and calculations.
 
+> **Concept note**:
+> - `EVAL` does not change stored documents in Elasticsearch.
+> - It only creates temporary columns for the current query result.
+> - You can use `EVAL` multiple times to build logic step-by-step.
+
 ```
 FROM web-logs-*
 | EVAL size_category = CASE(
@@ -612,6 +840,8 @@ FROM app-logs-*
 
 > ES|QL queries can also run via the `_query` REST endpoint. The response format differs from `_search` — results come back as columnar data.
 
+> **Why this matters**: `_query` is often easier for automation scripts because response columns are explicit and aligned with ES|QL output, while `_search` returns full JSON documents/hits format.
+
 ```
 Menu (☰) → Management → Dev Tools
 ```
@@ -625,14 +855,16 @@ POST /_query
 
 ### Part B: Advanced Investigation – Multi-Step Query Workflows
 
-**Objective**: Use ES|QL to answer complex operational questions through systematic query sequences.
+**Objective**: Use ES|QL to answer complex operational questions through a systematic, step-by-step query chain.
 
-1. Open Discover in ES|QL mode
+### Investigation Principles
 
-```
-Menu (☰) → Analytics → Discover
-Switch language from KQL to ES|QL
-```
+- One step, one question: each query should answer one thing clearly.
+- Gather raw evidence first (`KEEP`, `SORT`), then summarize (`STATS`).
+- Don't jump to conclusions early — rank services/endpoints first, then drill in.
+- End every investigation with a "next focused query" that confirms or rules out your hypothesis.
+
+1. Switch to ES|QL mode in Discover (same as Part A, Step 1)
 
 2. Step 1 — Identify error concentration by service
 
@@ -699,9 +931,9 @@ FROM app-logs-*
 
 > When two services have similar error counts, report both and avoid a single-cause conclusion.
 
-**Success**: You can convert a vague incident question into a deterministic ES|QL investigation chain and a clear next action.
+That's the full investigation workflow. Practice converting vague questions into structured query chains — it's the core skill for on-call incident analysis.
 
-> **Coming up**: In [Lab 14](./labs-12-14-observability-resilience.md#lab-14-automating-investigation-workflows-with-a-genai-agent), you will build a GenAI agent that automates this same multi-step investigation workflow. Keep your manual results — you will compare them against the agent's output.
+> **Coming up**: In [Lab 14](./labs-12-14-observability-resilience.md#lab-14-automating-investigation-workflows-with-a-genai-agent), you'll build a GenAI agent that automates this same investigation workflow. Keep your manual results — you'll compare them against the agent's output.
 
 ---
 
