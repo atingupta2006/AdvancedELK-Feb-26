@@ -113,7 +113,7 @@ Menu (☰) → Observability → SLOs
 > Menu (☰) → Observability → Synthetics
 > ```
 
-**Success**: You understand the three pillars of observability, can navigate APM/tracing UIs, and know how SLOs and AIOps fit into the monitoring strategy.
+That covers the conceptual foundations: three pillars of observability, APM/tracing UIs, SLOs, and AIOps tooling. You'll use these ideas throughout the remaining labs.
 
 ---
 
@@ -259,7 +259,7 @@ PUT _snapshot/training-backup
 }
 ```
 
-> **Note**: The `path.repo` setting must include `/tmp/es-snapshots` in `elasticsearch.yml` for this to work. If not configured, this will return an error — that's expected in the training environment.
+> **Note**: The `path.repo` setting must include `/tmp/es-snapshots` in `elasticsearch.yml` for this to work. If `path.repo` is not configured, you'll get: `"location [/tmp/es-snapshots] doesn't match any of the locations specified by path.repo because this setting is empty"` — that's expected in the training environment.
 
 ### Part B: Advanced Troubleshooting – Cluster Health Diagnostics
 
@@ -293,16 +293,30 @@ If any primary shard is unassigned:
   -> Critical incident (possible data unavailability/loss risk).
 ```
 
-4. Validate whether this is expected in single-node training
+4. Create a test index to reproduce the yellow health scenario
+
+> The cluster may already be yellow (from existing indices with a replica on a single-node cluster). To make this exercise self-contained, create a dedicated index:
+
+```json
+PUT training-scaling-test
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 1
+  }
+}
+```
+
+> Now check its shards — you should see one primary (STARTED) and one replica (UNASSIGNED):
 
 ```json
 GET _cluster/health
 GET _cat/shards/training-scaling-test?v
 ```
 
-> In single-node labs, `number_of_replicas: 1` can keep cluster health yellow because replicas cannot be placed on the same node as primaries.
-
 5. Apply the safe training remediation
+
+> Setting replicas to 0 resolves the yellow state on a single-node cluster:
 
 ```json
 PUT training-scaling-test/_settings
@@ -313,9 +327,17 @@ PUT training-scaling-test/_settings
 
 6. Re-check health after remediation
 
+> The replica shard should be gone. Cluster health may return to green, or stay yellow if other indices (like `enriched-logs-*`) also have unassigned replicas:
+
 ```json
 GET _cluster/health
 GET _cat/shards/training-scaling-test?v
+```
+
+7. Clean up the test index
+
+```json
+DELETE training-scaling-test
 ```
 
 ### Troubleshooting summary template
@@ -340,9 +362,9 @@ Verification: <post-action health check>
 
 > For training clusters, prefer index-level replica updates to broad wildcard updates.
 
-**Success**: You can diagnose yellow/red cluster alerts deterministically and produce a safe, command-ready remediation path.
+That covers the diagnostic workflow. You can apply this same sequence to any yellow/red cluster alert.
 
-> **Coming up**: In Lab 14 (next section), you will build a GenAI agent that automates this same cluster diagnostic workflow. Keep your manual results — you will compare them against the agent's output.
+> **Coming up**: In Lab 14 (next section), you'll build a GenAI agent that automates this same cluster diagnostic workflow. Keep your manual results — you'll compare them against the agent's output.
 
 ---
 
@@ -360,13 +382,20 @@ Verification: <post-action health check>
 ### Prerequisites
 
 - Labs 4, 11 (Part B), and 13 (Part B) completed (you understand the manual workflows)
-- Security enabled (Lab 7) — the agent uses an API key
 - Python 3.9+ installed on the training VM
 - An OpenAI-compatible API key (provided by the instructor)
 
 ### Part A: Create a Read-Only Elasticsearch API Key
 
-> The agent must only read data — never write. We enforce this with an API key restricted to read-only operations.
+> The agent should only read data — never write. In a production environment with security enabled, you enforce this with a restricted API key. If security is **disabled** in your training VM (`xpack.security.enabled: false`), skip this section and leave `ES_API_KEY` empty — the agent script handles both cases.
+
+> **Check your security status**:
+> ```json
+> GET /
+> ```
+> If the response returns without asking for credentials, security is off. Skip to Part B.
+
+> **If security is enabled**, create the API key:
 
 1. Open Dev Tools
 
@@ -386,7 +415,7 @@ POST _security/api_key
       "cluster": ["monitor"],
       "indices": [
         {
-          "names": ["web-logs-*", "app-logs-*", "training-app-pipeline-*"],
+          "names": ["web-logs-*", "app-logs-*", "training-app-pipeline-*", "enriched-logs-*"],
           "privileges": ["read", "view_index_metadata"]
         }
       ]
@@ -408,7 +437,7 @@ POST _security/api_key
 }
 ```
 
-> Save the `encoded` value. You will use it in the agent configuration.
+> Save the `encoded` value. You will use it in the agent configuration. If security is disabled, skip this — leave `ES_API_KEY` empty in the next section.
 
 ### Part B: Install the Agent Dependencies
 
@@ -439,7 +468,7 @@ import sys
 import requests
 
 # --- Configuration ---
-ES_HOST = os.environ.get("ES_HOST", "http://127.0.0.1:9200")
+ES_HOST = os.environ.get("ES_HOST", "http://192.168.56.101:9200")
 ES_API_KEY = os.environ.get("ES_API_KEY", "")
 
 # OpenAI-compatible endpoint (works with OpenAI, Azure OpenAI, or local models)
@@ -515,9 +544,10 @@ Given a natural-language question, generate a JSON array of Elasticsearch querie
 
 Rules:
 - Only use read-only operations: GET with _search, _count, _query, _cluster/health, _cat/*.
-- Available indices: web-logs-*, app-logs-*, training-app-pipeline-*.
+- Available indices: web-logs-*, app-logs-*, training-app-pipeline-*, enriched-logs-*.
 - Available fields in web-logs-*: @timestamp, client_ip, method, path, status (integer), bytes (integer).
 - Available fields in app-logs-*/training-app-pipeline-*: @timestamp, level, service, message, user_id, order_id, amount, error, session_id, product_id, quantity.
+- Available fields in enriched-logs-*: @timestamp, user_id, action, status, user_info (array with name, department, location, email), enriched.
 - Return ONLY valid JSON. No markdown, no explanation.
 
 Output format:
@@ -626,8 +656,8 @@ AGENT
 6. Set environment variables
 
 ```bash
-export ES_HOST="http://127.0.0.1:9200"
-export ES_API_KEY="<paste the encoded API key from step 3>"
+export ES_HOST="http://192.168.56.101:9200"
+export ES_API_KEY=""   # Leave empty if security is disabled; paste encoded key if enabled
 export LLM_API_KEY="<API key provided by instructor>"
 export LLM_MODEL="gpt-4o-mini"
 ```
@@ -725,4 +755,4 @@ grep -n "BLOCKED\|ALLOWED\|Blocked\|approval" elk_agent.py
 
 > The manual labs teach the investigation **logic**. This lab wraps that same logic in an automated pipeline. If you cannot produce the manual summary, the agent's output will not make sense to you either.
 
-**Success**: You can deploy a read-only GenAI investigation agent, understand its three-layer architecture, verify its output against manual workflows, and explain why human approval is mandatory.
+That's Lab 14. You now have a working read-only investigation agent, understand its three-layer design, and can verify its output against your manual workflows from Labs 4, 11, and 13.
