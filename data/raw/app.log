@@ -6,7 +6,7 @@
 {"timestamp":"2026-02-09T10:15:28Z","level":"ERROR","service":"payment-service","message":"Payment processing failed","error":"Timeout","order_id":"order_654"}
 {"timestamp":"2026-02-09T10:15:29Z","level":"INFO","service":"notification-service","message":"Email sent","recipient":"user@example.com","type":"order_confirmation"}
 {"timestamp":"2026-02-09T10:15:30Z","level":"INFO","service":"auth-service","message":"User logout","user_id":"user_12345"}
-{"timestamp":"2026-02-09T10:15:31Z","level":"ERROR","service":"inventory-service","message":"Database connection failed","error":"Connection refused","host":"db-primary"}
+{"timestamp":"2026-02-09T10:15:31Z","level":"ERROR","service":"inventory-service","message":"Database connection failed","error":"Connection refused","db_host":"db-primary"}
 {"timestamp":"2026-02-09T10:15:32Z","level":"INFO","service":"search-service","message":"Search query executed","query":"laptop","results":234}
 {"timestamp":"2026-02-09T10:15:33Z","level":"WARN","service":"auth-service","message":"Failed login attempt","username":"admin","ip":"192.168.1.200"}
 {"timestamp":"2026-02-09T10:15:34Z","level":"INFO","service":"recommendation-service","message":"Recommendations generated","user_id":"user_12345","count":10}

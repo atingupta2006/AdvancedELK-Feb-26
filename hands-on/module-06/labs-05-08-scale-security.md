@@ -316,6 +316,13 @@ sudo sed -i '$ a\\' /etc/kibana/kibana.yml
 sudo sed -i '$ a\elasticsearch.username: "kibana_system"' /etc/kibana/kibana.yml
 ```
 
+> Fleet (Lab 10) requires an encryption key to store API keys. Add it now so it's ready:
+
+```bash
+ENCRYPTION_KEY=$(openssl rand -base64 24)
+echo "xpack.encryptedSavedObjects.encryptionKey: \"$ENCRYPTION_KEY\"" | sudo tee -a /etc/kibana/kibana.yml
+```
+
 > Store the `kibana_system` password securely in the Kibana keystore:
 
 ```bash

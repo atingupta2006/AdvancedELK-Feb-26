@@ -665,16 +665,38 @@ ls -la /var/lib/logstash/dead_letter_queue/
 
 8. Understand the DLQ reader pattern (conceptual)
 
-> A DLQ reader pipeline uses the `dead_letter_queue` input plugin:
-> ```conf
-> input {
->   dead_letter_queue {
->     path => "/var/lib/logstash/dead_letter_queue/dlq-demo"
->     commit_offsets => true
->   }
-> }
-> ```
-> This is the production pattern for recovering failed events without data loss.
+A DLQ reader pipeline uses the `dead_letter_queue` input plugin:
+```conf
+input {
+  dead_letter_queue {
+    path => "/var/lib/logstash/dead_letter_queue/dlq-demo"
+    commit_offsets => true
+  }
+}
+
+filter {
+  mutate {
+    add_field => {
+      "recovery_pipeline" => "dlq-reader"
+    }
+  }
+
+  date {
+    match => ["timestamp", "ISO8601"]
+    target => "@timestamp"
+    ignore_failure => true
+  }
+}
+
+output {
+  elasticsearch {
+    hosts => ["http://127.0.0.1:9200"]
+    index => "training-dlq-debug-%{+YYYY.MM.dd}"
+  }
+}
+```
+
+This is the production pattern for recovering failed events without data loss.
 
 ### Part 3: Custom Analyzers
 

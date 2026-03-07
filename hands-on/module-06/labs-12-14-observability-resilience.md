@@ -1,12 +1,24 @@
-# Module 06 - Labs 12-14
+# Module 06 — Labs 12–14: Observability, Troubleshooting & GenAI Agent Automation
 
-## Observability, Troubleshooting, and GenAI Agent Automation
+> **Stack Version**: Elasticsearch 9.x | Kibana 9.x
+> **Prereq**: Modules 01–05 and Labs 01–11 completed.
+> **Cluster**: 3-node cluster (node-1, node-2, node-3) — security **OFF**.
+> **ES Host**: Replace `<CLUSTER_NODE1_IP>` with the IP of any cluster node (provided by the instructor). Example: `http://<CLUSTER_NODE1_IP>:9200`.
+> **Kibana**: `http://<CLUSTER_NODE1_IP>:5601`
+> **Data state**: `enriched-logs-*` indices are populated from earlier labs. `web-logs-*` and `app-logs-*` should exist from Module 02; if they don't, Lab 14 includes a sample data seeding step to create them.
+> **Shared environment**: Multiple students share the same cluster. Use **your name or initials** when creating test indices (e.g., `training-diag-test-jsmith`) to avoid conflicts.
+
+> **Total estimated time**: 30–60 minutes. Automation scripts handle data seeding and agent environment setup — you focus on running queries and interpreting results.
+
+> These three labs progress from observability concepts (Lab 12), through hands-on cluster troubleshooting (Lab 13), to automating investigation workflows with a Python-based GenAI agent (Lab 14). All labs run on the same 3-node cluster.
 
 ---
 
-## Lab 12: Observability Deep Dive
+## Lab 12: Observability — Concepts, Correlation & Cluster Insights
 
-**Objective**: Explore distributed tracing concepts, logs-metrics-traces correlation, and observability tooling in Kibana
+**Estimated Time**: 10–15 minutes
+
+**Objective**: Understand the three pillars of observability, explore Kibana's observability tooling, and run hands-on queries that demonstrate log correlation and SLI measurement using available cluster data.
 
 > **Observability** goes beyond monitoring. Monitoring tells you "something is broken." Observability tells you **why** it's broken by correlating three signals: **logs** (what happened), **metrics** (how the system behaved), and **traces** (what path a request took through services).
 
@@ -33,57 +45,155 @@
 └────────────────────────────────────────────────────────┘
 ```
 
-### Part 2: Exploring APM in Kibana
+> In production, **trace.id** is injected by observability agents into every log line, metric sample, and span. Clicking a trace ID in Kibana shows the full request path across all services.
 
-2. Navigate to Observability
+### Part 2: Checking Feature Availability
 
-```
-Menu (☰) → Observability → Overview
-```
-
-> If you have Elastic Agent with APM integration enabled, this page shows service inventory, traces, and metrics. In our training environment, we may not have live APM data, but we can explore the UI.
-
-3. Explore Service Map (if available)
+2. Check which observability features are active on this cluster
 
 ```
-Menu (☰) → Observability → APM → Service Map
+Menu (☰) → Management → Dev Tools
 ```
 
-> **Service Maps** auto-discover service dependencies from trace data. Each node is a service; edges show communication paths. Color indicates health.
+```json
+GET _xpack/usage?filter_path=ml,data_streams
+```
 
-> If no APM data exists, Kibana shows an empty map with setup instructions. This is expected in a training environment without instrumented applications.
-
-4. Understand auto-instrumentation
-
-> **Auto-instrumentation** adds tracing to an application **without code changes**. Elastic APM supports:
-> - **Java**: `elastic-apm-agent.jar` attached at JVM startup
-> - **Node.js**: `elastic-apm-node` imported at app start
-> - **Python**: `elastic-apm` middleware
+> This shows which X-Pack features are enabled and have data. On a **basic license** (the default for training clusters), you will see:
+> - `ml.available: false` — Machine Learning requires a **Platinum, Enterprise, or Trial** license
+> - `ml.enabled: true` — the ML plugin is installed but not usable on the basic license
+> - `data_streams` — shows count of active data streams
 >
-> The agent automatically creates spans for HTTP requests, database calls, and queue operations.
+> **To activate a 30-day trial** (optional — enables ML, Watcher, and other platinum features):
+> ```json
+> POST _license/start_trial?acknowledge=true
+> ```
+> After activation, re-run the `_xpack/usage` query and `ml.available` will change to `true`. Trial licenses **cannot be restarted** once expired.
 
-### Part 3: Correlating Logs, Metrics, and Traces
+3. Understand how observability data flows into Kibana
 
-5. Check for correlated data in Discover
+> **Why the Observability UI pages are empty on this cluster**: Kibana's Observability UI is populated by **Elastic integrations** — observability agents (Filebeat, Metricbeat, Elastic Agent) that write to data streams following naming conventions (`logs-*`, `metrics-*`, `traces-*`). Our training cluster uses custom indices, so those dashboards are empty.
+>
+> In production, you would see:
+> - **Trace data**: Distributed traces from instrumented services (`traces-*` data streams)
+> - **Infrastructure metrics**: CPU, memory, disk from Metricbeat (`metrics-system.*`)
+> - **Log streams**: Application logs from Filebeat (`logs-*`)
+> - **Service Map**: Auto-generated dependency graph from distributed traces
+>
+> In this lab, we work directly with the **Elasticsearch APIs** in Dev Tools — which is what matters for troubleshooting and investigation.
+
+4. Auto-instrumentation concepts
+
+> **Auto-instrumentation** means an observability agent automatically captures telemetry (traces, metrics, logs) from your application without requiring code changes to every function. You add the agent library once, and it intercepts HTTP requests, database calls, and inter-service communication.
+>
+> **How it works**:
+> - The agent **monkey-patches** HTTP libraries (e.g., `requests`, `http.client`) to inject `traceparent` headers into outgoing calls
+> - Each service reports its spans to a central collector, which correlates them into a **distributed trace** using the shared `trace.id`
+> - Framework integrations exist for Python (Django, FastAPI), Java (Spring Boot), Node.js (Express), Go, .NET, and more
+> - **Zero code changes** to business logic — the agent handles all instrumentation automatically
+>
+> This is what makes distributed tracing practical at scale — you don't need to manually add trace context to every service call.
+
+5. Service maps and topology views
+
+> When instrumented services report trace data, Kibana automatically discovers service dependencies and draws a **service map** — a live topology view.
 
 ```
-Menu (☰) → Analytics → Discover
+┌─────────────────────────────────────────────────────────────┐
+│              Service Map (Kibana → Observability)             │
+│                                                              │
+│  ┌────────────┐       ┌─────────────────┐                   │
+│  │  Frontend   │──────▶│  API Gateway    │                   │
+│  │  (React)    │       │  (Node.js)      │                   │
+│  └────────────┘       └──────┬──────────┘                   │
+│                              │                               │
+│              ┌───────────────┼───────────────┐               │
+│              ▼               ▼               ▼               │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
+│  │ Auth Service  │  │ Order Service│  │Product Service│      │
+│  │  (Python)     │  │  (Java)      │  │  (Go)        │      │
+│  └──────────────┘  └──────┬───────┘  └──────────────┘       │
+│                           │                                  │
+│                           ▼                                  │
+│                   ┌──────────────┐                           │
+│                   │Payment Service│                          │
+│                   │  (Python)     │ ← high error rate        │
+│                   └──────────────┘                           │
+│                                                              │
+│  Edge color: 🟢 Green = healthy  🔴 Red = errors detected    │
+│  Node color: indicates service health (latency + error %)   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-> In a fully instrumented environment, log documents contain `trace.id` and `span.id` fields. You can filter: `trace.id : "abc123"` to see all logs from one user request across all services.
+> **How topology discovery works**:
+> - Each instrumented service reports its name and outgoing HTTP calls
+> - The `traceparent` header links caller → callee across service boundaries
+> - The trace collector correlates spans into distributed traces and builds the dependency graph
+> - Kibana renders the map from `traces-*` data streams
+>
+> **What service maps reveal in production**:
+> - **Bottlenecks**: A red node with high latency shows which service is slowing down the chain
+> - **Cascading failures**: If Payment Service is failing, the map shows Order Service is affected (it depends on Payment)
+> - **Unknown dependencies**: Services calling unexpected endpoints are immediately visible
+> - **Blast radius**: Click a failing service to see all upstream callers that are impacted
+>
+> In our training environment, we don't have instrumented services running, so the service map would be empty. The diagram above represents what you would see in a production microservices environment.
 
-6. Review system metrics from Metricbeat
+6. Check for data streams on the cluster
 
+```json
+GET _data_stream/*?filter_path=data_streams.name
 ```
-Menu (☰) → Analytics → Dashboard
-Search: "[Metricbeat System] Host overview"
+
+> This shows all data streams currently on the cluster. If no integrations are configured, this returns an empty array — that's expected for a training cluster where we use standard indices instead of data streams.
+
+### Part 4: Hands-On Log Correlation Using Enriched Logs
+
+> In a fully instrumented environment, you would correlate logs using `trace.id`. In this training environment, we demonstrate the same **principle** — cross-field correlation — using `user_id` to trace a user's actions across documents in `enriched-logs-*`.
+
+6. Correlate user activity across enriched logs
+
+```json
+GET enriched-logs-*/_search
+{
+  "size": 0,
+  "aggs": {
+    "by_user": {
+      "terms": { "field": "user_id.keyword", "size": 5 },
+      "aggs": {
+        "actions": {
+          "terms": { "field": "action.keyword", "size": 10 }
+        },
+        "status_breakdown": {
+          "terms": { "field": "status.keyword", "size": 5 }
+        }
+      }
+    }
+  }
+}
 ```
 
-> This dashboard shows CPU, memory, disk, and network metrics. During an incident, correlating a CPU spike with error log timestamps helps identify resource-driven failures.
+> This shows each user's actions and success/failure distribution. In production observability, the same pattern applies with `trace.id` — group by trace ID, aggregate spans and logs, identify which service call failed.
 
-### Part 4: SLOs, SLAs, and AIOps Concepts
+7. Identify users with failed actions
 
-7. Understand SLO definitions
+```json
+GET enriched-logs-*/_search
+{
+  "size": 5,
+  "query": {
+    "term": { "status.keyword": "failed" }
+  },
+  "sort": [{ "@timestamp": "desc" }],
+  "_source": ["@timestamp", "user_id", "action", "status", "user_info.name", "user_info.department"]
+}
+```
+
+> This is the observability equivalent of "find the failing requests" — but using enriched business data instead of HTTP status codes. The enrichment fields (`user_info.name`, `user_info.department`) provide context that raw logs don't have.
+
+### Part 5: SLOs, SLAs, and AIOps Concepts
+
+8. Understand SLO definitions
 
 > | Term | Definition | Example |
 > |------|-----------|---------|
@@ -92,32 +202,52 @@ Search: "[Metricbeat System] Host overview"
 > | **SLA** (Service Level Agreement) | The contract | "If SLO is violated, customer gets credit" |
 > | **Error Budget** | Allowed failures | 0.5% of requests can fail before SLO breach |
 
-8. Explore SLO features in Kibana (if available)
+9. Compute a pseudo-SLI from enriched logs
 
+> SLIs are measurable metrics. Let's compute one: the **success rate** of user actions in `enriched-logs-*` — treating it as our service's SLI.
+
+```json
+GET enriched-logs-*/_search
+{
+  "size": 0,
+  "aggs": {
+    "total_actions": { "value_count": { "field": "status.keyword" } },
+    "successful_actions": {
+      "filter": { "term": { "status.keyword": "success" } },
+      "aggs": {
+        "count": { "value_count": { "field": "status.keyword" } }
+      }
+    }
+  }
+}
 ```
-Menu (☰) → Observability → SLOs
-```
 
-> Kibana 8.x+ includes native SLO management. You define an SLI (e.g., percentage of requests with status < 500) and an SLO target (e.g., 99.5%). Kibana tracks the error budget over a rolling window.
+> **Reading the result**: Divide `successful_actions.count.value` by `total_actions.value` to get the success rate. For example, 24 successes out of 28 total = 85.7% SLI. If your SLO target is 95%, you've breached the error budget.
 
-9. AIOps and synthetic monitoring concepts
+10. SLO management and AIOps features (concept overview)
 
-> **AIOps** applies machine learning to operations:
-> - **Anomaly detection**: ML jobs in Kibana detect unusual patterns (e.g., sudden latency increase)
-> - **Log rate analysis**: Identifies when log volume changes significantly
-> - **Synthetic monitoring**: Simulated user journeys (e.g., "every 5 minutes, test the checkout flow") that detect issues before real users do
+> Kibana 9.x includes native **SLO management** and **AIOps** features that build on the SLI concepts above:
 >
-> In Kibana:
-> ```
-> Menu (☰) → Machine Learning → Anomaly Detection
-> Menu (☰) → Observability → Synthetics
-> ```
+> | Feature | What it does | License Required |
+> |---------|-------------|------------------|
+> | **SLO Management** (`Observability → SLOs`) | Define SLI + target, track error budget over rolling window | Platinum / Enterprise / Trial + Security |
+> | **Anomaly Detection** (`ML → Anomaly Detection`) | ML jobs detect unusual patterns (latency spikes, log volume changes) | Platinum / Enterprise / Trial |
+> | **Log Rate Analysis** | Identifies when log volume changes significantly | Platinum / Enterprise / Trial |
+> | **Synthetic Monitoring** (`Observability → Synthetics`) | Simulated user journeys that detect issues before real users do | Platinum / Enterprise / Trial |
+>
+> **Why we don't demo these in the UI**: These features require a **Platinum or Trial license** (our training cluster uses a basic license) and **security enabled with proper roles**. On a basic license, the SLO page shows a permissions error and ML shows an upgrade prompt. In production environments with the appropriate license, these are powerful tools.
+>
+> **To try them**: Activate a 30-day trial (`POST _license/start_trial?acknowledge=true`), enable security, and configure role permissions. Trial licenses cannot be restarted once expired — use them judiciously.
+>
+> The key takeaway: we just **computed an SLI manually** (Step 9) using aggregation queries. SLO management automates that same computation on a rolling window and alerts when the error budget is breached.
 
-That covers the conceptual foundations: three pillars of observability, APM/tracing UIs, SLOs, and AIOps tooling. You'll use these ideas throughout the remaining labs.
+That covers the conceptual foundations with hands-on verification: three pillars of observability, distributed tracing and auto-instrumentation concepts, service map topology, log correlation using available data, SLI computation, and production tooling awareness.
 
 ---
 
 ## Lab 13: Troubleshooting and Failure Handling
+
+**Estimated Time**: 15–20 minutes
 
 **Objective**: Diagnose common Elasticsearch cluster issues using systematic diagnostic workflows
 
@@ -149,6 +279,7 @@ GET _cluster/allocation/explain
 > - **No matching node**: Shard requires a node role that doesn't exist
 > - **Disk watermark exceeded**: Node disk usage > 85% (flood stage at 95%)
 > - **Max retries exceeded**: Previous allocation failed too many times
+> - **Allocation filter**: An index-level setting forces allocation to a non-existent node
 
 3. Check disk watermarks
 
@@ -205,11 +336,11 @@ GET _nodes/hot_threads
 > `pending_tasks` shows queued cluster state changes (e.g., creating indices, moving shards). A long queue means the master node is overloaded.
 > `hot_threads` shows what each node's threads are doing — helps identify long-running operations.
 
-7. Rolling restart strategy (conceptual)
+7. Rolling restart strategy
 
-> When you need to upgrade or restart nodes:
->
-> **Step 1**: Disable shard allocation (prevent shard movement during restart)
+> When you need to upgrade or restart nodes, follow this sequence to minimize disruption. The commands below are safe to run on a training cluster but will temporarily disrupt the cluster — **run them only if the instructor directs you to.**
+
+> **Step 1**: Disable shard allocation (prevents shard movement during the restart)
 > ```json
 > PUT _cluster/settings
 > {
@@ -218,18 +349,18 @@ GET _nodes/hot_threads
 >   }
 > }
 > ```
->
-> **Step 2**: Flush all indices (reduce replay time on restart)
+
+> **Step 2**: Flush all indices (reduces replay time on restart)
 > ```json
 > POST _flush
 > ```
->
-> **Step 3**: Restart the node (via systemd)
-> ```bash
+
+> **Step 3**: Restart the target node (via systemd on the VM)
+> ```
 > sudo systemctl restart elasticsearch
 > ```
->
-> **Step 4**: Wait for node to rejoin, then re-enable allocation
+
+> **Step 4**: Wait for the node to rejoin, then re-enable allocation
 > ```json
 > PUT _cluster/settings
 > {
@@ -239,6 +370,13 @@ GET _nodes/hot_threads
 > }
 > ```
 
+> **Step 5**: Verify cluster recovers to green
+> ```json
+> GET _cluster/health
+> ```
+>
+> In our multi-node cluster, restarting one node will cause a brief yellow state while shards reallocate. The cluster should return to green within 30–60 seconds after re-enabling allocation.
+
 8. Disaster recovery concepts
 
 > | Strategy | RPO | RTO | Complexity |
@@ -246,8 +384,8 @@ GET _nodes/hot_threads
 > | **Snapshots** (to S3/NFS) | Hours | Hours | Low |
 > | **CCR** (Cross-Cluster Replication) | Seconds | Minutes | Medium |
 > | **Multi-region active-active** | Near-zero | Near-zero | High |
->
-> Create a snapshot repository and take a snapshot:
+
+Register a snapshot repository (requires `path.repo` configured in `elasticsearch.yml`):
 
 ```json
 PUT _snapshot/training-backup
@@ -259,13 +397,25 @@ PUT _snapshot/training-backup
 }
 ```
 
-> **Note**: The `path.repo` setting must include `/tmp/es-snapshots` in `elasticsearch.yml` for this to work. If `path.repo` is not configured, you'll get: `"location [/tmp/es-snapshots] doesn't match any of the locations specified by path.repo because this setting is empty"` — that's expected in the training environment.
+> **Expected result**: If `path.repo` is not configured in `elasticsearch.yml`, you will get: `"location [/tmp/es-snapshots] doesn't match any of the locations specified by path.repo because this setting is empty"`. This is expected — adding `path.repo: ["/tmp/es-snapshots"]` to all nodes' `elasticsearch.yml` and restarting would enable it.
+>
+> **If `path.repo` is already configured** (check with instructor), verify it worked:
+> ```json
+> GET _snapshot/training-backup
+> ```
+>
+> Then take a snapshot:
+> ```json
+> PUT _snapshot/training-backup/snapshot-1?wait_for_completion=true
+> ```
+>
+> Snapshots are the simplest disaster recovery strategy. For production, use S3 or GCS instead of filesystem.
 
-### Part B: Advanced Troubleshooting – Cluster Health Diagnostics
+### Part B: Hands-On Failure Simulation — Cluster Health Diagnostics
 
-**Objective**: Build a systematic diagnostic workflow for cluster health alerts.
+**Objective**: Create a real cluster health issue, diagnose it using the APIs from Part A, and resolve it.
 
-### Troubleshooting workflow
+#### Diagnostic workflow
 
 1. Run the baseline health checks
 
@@ -275,72 +425,107 @@ GET _cat/nodes?v&h=name,node.role,heap.percent,cpu,load_1m,disk.used_percent
 GET _cat/shards?v&h=index,shard,prirep,state,docs,store,node&s=state
 ```
 
-2. Ask Elasticsearch why a shard is unassigned
+> Record the current health state, node count, and any existing unassigned shards.
+
+2. Ask Elasticsearch why a shard is unassigned (if any exist)
 
 ```json
 GET _cluster/allocation/explain
 ```
 
-> This is the highest-value API for this lab. It tells you exactly why allocation is blocked.
+> This is the highest-value API for this lab. It tells you exactly why allocation is blocked. If the cluster is already green with no unassigned shards, this will return an error — that's fine, we'll create an unassigned shard in the next step.
 
 3. Classify severity with a simple rule
 
 ```
 If only replica shards are unassigned and primaries are started:
-  -> Degraded redundancy, not immediate data-loss incident.
+  → Degraded redundancy, not immediate data-loss risk.
 
 If any primary shard is unassigned:
-  -> Critical incident (possible data unavailability/loss risk).
+  → Critical incident (possible data unavailability / loss risk).
 ```
 
 4. Create a test index to reproduce the yellow health scenario
 
-> The cluster may already be yellow (from existing indices with a replica on a single-node cluster). To make this exercise self-contained, create a dedicated index:
+> First, check how many nodes are in the cluster:
+> ```json
+> GET _cat/nodes?h=name
+> ```
+> Count the nodes. To force a **yellow** state, you need **more replicas than (node_count - 1)**. On a 3-node cluster, `replicas: 2` stays green (primary + 2 replicas = 3 copies across 3 nodes). You need `replicas: 3` or higher.
+
+> **Replace `<YOUR_INITIALS>` below** with your name/initials to avoid conflicts with other students.
 
 ```json
-PUT training-scaling-test
+PUT training-diag-test-<YOUR_INITIALS>
 {
   "settings": {
     "number_of_shards": 1,
-    "number_of_replicas": 1
+    "number_of_replicas": 3
   }
 }
 ```
 
-> Now check its shards — you should see one primary (STARTED) and one replica (UNASSIGNED):
+> With 3 replicas requested on a 3-node cluster: primary goes to node-1, replica-1 to node-2, replica-2 to node-3 — but replica-3 has **no node left**. Check:
 
 ```json
 GET _cluster/health
-GET _cat/shards/training-scaling-test?v
+GET _cat/shards/training-diag-test-<YOUR_INITIALS>?v
 ```
 
-5. Apply the safe training remediation
+> You should see:
+> - Primary: **STARTED** (on one node)
+> - Replica 1: **STARTED** (on a second node)
+> - Replica 2: **STARTED** (on a third node)
+> - Replica 3: **UNASSIGNED**
+> - Cluster health: **yellow**
 
-> Setting replicas to 0 resolves the yellow state on a single-node cluster:
+5. Diagnose the unassigned replica
 
 ```json
-PUT training-scaling-test/_settings
+GET _cluster/allocation/explain
+```
+
+> The response should identify the `decider` that blocked allocation — likely `same_shard` (cannot place two copies of the same shard on the same node) or `throttling`. This is exactly how you would diagnose an unassigned shard in production.
+
+6. Apply the safe remediation
+
+> Reduce replicas to match available nodes. On a 3-node cluster, `2` replicas is the maximum that can be fully assigned (primary + 2 replicas = 3 copies across 3 nodes). On a 2-node cluster, use `1`.
+
+```json
+PUT training-diag-test-<YOUR_INITIALS>/_settings
 {
-  "number_of_replicas": 0
+  "number_of_replicas": 2
 }
 ```
 
-6. Re-check health after remediation
+> **Adjust the value**: Set `number_of_replicas` to `(node_count - 1)`. For 3 nodes → `2`. For 2 nodes → `1`.
 
-> The replica shard should be gone. Cluster health may return to green, or stay yellow if other indices (like `enriched-logs-*`) also have unassigned replicas:
+7. Verify the fix
 
 ```json
 GET _cluster/health
-GET _cat/shards/training-scaling-test?v
+GET _cat/shards/training-diag-test-<YOUR_INITIALS>?v
 ```
 
-7. Clean up the test index
+> Cluster health should return to **green**. All shards (1 primary + N replicas) should show **STARTED**.
+
+8. Clean up the test index
+
+> **Important**: Only delete YOUR test index — not other students' indices.
 
 ```json
-DELETE training-scaling-test
+DELETE training-diag-test-<YOUR_INITIALS>
 ```
 
-### Troubleshooting summary template
+Verify cleanup:
+
+```json
+GET _cluster/health
+```
+
+> Health should still be green after cleanup.
+
+#### Troubleshooting summary template
 
 Use this format for a structured troubleshooting note:
 
@@ -354,13 +539,11 @@ Recommended action: <exact next command>
 Verification: <post-action health check>
 ```
 
-### Ambiguity guardrails
+#### Guardrails
 
-> Do not claim "no risk" until you confirm primaries are assigned.
-
-> Do not use shell pipes like `grep` inside Dev Tools requests. Keep API calls valid JSON/REST only.
-
-> For training clusters, prefer index-level replica updates to broad wildcard updates.
+> - Do not claim "no risk" until you confirm primaries are assigned.
+> - Do not use shell pipes like `grep` inside Dev Tools requests. Keep API calls as valid JSON/REST only.
+> - For training clusters, prefer index-level replica updates to broad wildcard updates.
 
 That covers the diagnostic workflow. You can apply this same sequence to any yellow/red cluster alert.
 
@@ -370,335 +553,142 @@ That covers the diagnostic workflow. You can apply this same sequence to any yel
 
 ## Lab 14: Automating Investigation Workflows with a GenAI Agent
 
-**Objective**: Build a working GenAI agent that automates the three manual investigation workflows from Labs 4, 11, and 13
+**Estimated Time**: 15–20 minutes
 
-> In Labs 4, 11 (Part B), and 13 (Part B), you ran multi-step investigation workflows manually — querying Elasticsearch, interpreting results, and producing structured summaries. This lab automates that entire process using a Python-based GenAI agent that:
+**Objective**: Build a working GenAI agent that automates the manual investigation workflows from Labs 4 (Alert Triage), 11 Part B (ES|QL Investigation), and 13 (Cluster Diagnostics)
+
+> In the earlier labs, you ran multi-step investigation workflows manually — querying Elasticsearch, interpreting results, and producing structured summaries. This lab automates that entire process using a Python-based GenAI agent that:
 > 1. Accepts a natural-language question
-> 2. Generates a query plan
-> 3. Executes queries against Elasticsearch (read-only)
-> 4. Produces a structured investigation summary
-> 5. Waits for human approval before recommending any action
+> 2. Generates a query plan (via LLM)
+> 3. Executes queries against Elasticsearch (read-only, with guardrails)
+> 4. Detects query failures and data gaps before summarizing
+> 5. Produces a structured investigation summary
+> 6. Waits for human approval before recommending any action
 
-### Prerequisites
+### Part A: API Keys and Read-Only Access (Concept Overview)
 
-- Labs 4, 11 (Part B), and 13 (Part B) completed (you understand the manual workflows)
-- Python 3.9+ installed on the training VM
-- An OpenAI-compatible API key (provided by the instructor)
-
-### Part A: Create a Read-Only Elasticsearch API Key
-
-> The agent should only read data — never write. In a production environment with security enabled, you enforce this with a restricted API key. If security is **disabled** in your training VM (`xpack.security.enabled: false`), skip this section and leave `ES_API_KEY` empty — the agent script handles both cases.
-
-> **Check your security status**:
+> In production, the agent should only read data — never write. You enforce this with a **restricted API key** that grants only `monitor` cluster privilege and `read` + `view_index_metadata` index privileges.
+>
+> **In our lab environment**: Security is **OFF** on the 3-node cluster, so no API key is needed — the agent works without one. Leave `ES_API_KEY` empty.
+>
+> **Production reference** — when security IS enabled, you would create a restricted API key:
+>
 > ```json
-> GET /
+> POST _security/api_key
+> {
+>   "name": "genai-agent-readonly",
+>   "expiration": "8h",
+>   "role_descriptors": {
+>     "readonly_agent": {
+>       "cluster": ["monitor"],
+>       "indices": [{ "names": ["web-logs-*", "app-logs-*", "enriched-logs-*"], "privileges": ["read", "view_index_metadata"] }]
+>     }
+>   }
+> }
 > ```
-> If the response returns without asking for credentials, security is off. Skip to Part B.
 
-> **If security is enabled**, create the API key:
+### Part B: One-Command Setup
 
-1. Open Dev Tools
+4. Set up the agent environment with the automation script
 
-```
-Menu (☰) → Management → Dev Tools
-```
-
-2. Create the restricted API key
-
-```json
-POST _security/api_key
-{
-  "name": "genai-agent-readonly",
-  "expiration": "8h",
-  "role_descriptors": {
-    "readonly_agent": {
-      "cluster": ["monitor"],
-      "indices": [
-        {
-          "names": ["web-logs-*", "app-logs-*", "training-app-pipeline-*", "enriched-logs-*"],
-          "privileges": ["read", "view_index_metadata"]
-        }
-      ]
-    }
-  }
-}
-```
-
-3. Copy the API key from the response
-
-> The response contains an `encoded` field — this is the Base64-encoded API key. Copy and save it. Example:
-
-```json
-{
-  "id": "abc123...",
-  "name": "genai-agent-readonly",
-  "encoded": "YWJjMTIzOi0tLXNlY3JldC0tLQ==",
-  "api_key": "---secret---"
-}
-```
-
-> Save the `encoded` value. You will use it in the agent configuration. If security is disabled, skip this — leave `ES_API_KEY` empty in the next section.
-
-### Part B: Install the Agent Dependencies
-
-4. Set up the Python environment
+> The setup script creates `~/genai-agent/`, installs Python dependencies, copies the agent script, and writes the `.env` configuration — all in one command.
 
 ```bash
-cd ~
-mkdir -p genai-agent && cd genai-agent
-python3 -m venv .venv
-source .venv/bin/activate
-pip install openai requests
+bash ~/GH/hands-on/module-06/genai-agent/setup-agent.sh http://<CLUSTER_NODE1_IP>:9200 <LLM_API_KEY>
 ```
 
-### Part C: Create the Agent Script
-
-5. Create the agent script
-
-```bash
-cat <<'AGENT' > elk_agent.py
-"""
-ELK Investigation Agent
-Accepts a natural-language question, generates Elasticsearch queries,
-executes them read-only, and produces a structured summary.
-"""
-import json
-import os
-import sys
-import requests
-
-# --- Configuration ---
-ES_HOST = os.environ.get("ES_HOST", "http://192.168.56.101:9200")
-ES_API_KEY = os.environ.get("ES_API_KEY", "")
-
-# OpenAI-compatible endpoint (works with OpenAI, Azure OpenAI, or local models)
-LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
-LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
-LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
-
-# --- Guardrails ---
-ALLOWED_ES_ENDPOINTS = [
-    "_search", "_count", "_query", "_cluster/health",
-    "_cat/nodes", "_cat/shards", "_cat/indices",
-    "_cat/allocation", "_cluster/allocation/explain",
-    "_cluster/stats", "_nodes/stats"
-]
-
-BLOCKED_METHODS = ["PUT", "DELETE", "PATCH"]
-
-def es_request(method, path, body=None):
-    """Execute a read-only Elasticsearch request with guardrails."""
-    method = method.upper()
-
-    if method in BLOCKED_METHODS:
-        return {"error": f"Blocked: {method} is not allowed (read-only agent)"}
-
-    endpoint = path.lstrip("/").split("?")[0]
-    # Check if the endpoint matches any allowed pattern
-    index_part = endpoint.split("/")[0] if "/" in endpoint else ""
-    api_part = "/".join(endpoint.split("/")[1:]) if "/" in endpoint else endpoint
-
-    allowed = any(api_part.startswith(ep.lstrip("/")) or endpoint.startswith(ep.lstrip("/"))
-                  for ep in ALLOWED_ES_ENDPOINTS)
-    if not allowed:
-        return {"error": f"Blocked: endpoint '{path}' is not in the allowed list"}
-
-    headers = {"Content-Type": "application/json"}
-    if ES_API_KEY:
-        headers["Authorization"] = f"ApiKey {ES_API_KEY}"
-
-    url = f"{ES_HOST}/{path}"
-    try:
-        if method == "GET" and body:
-            resp = requests.get(url, headers=headers, json=body, timeout=30)
-        elif method == "POST" and body:
-            resp = requests.post(url, headers=headers, json=body, timeout=30)
-        else:
-            resp = requests.get(url, headers=headers, timeout=30)
-        return resp.json()
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def ask_llm(system_prompt, user_message):
-    """Send a prompt to the LLM and return the response text."""
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-        response = client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ],
-            temperature=0.2
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"LLM Error: {e}"
-
-
-# --- System Prompts ---
-PLANNER_PROMPT = """You are an Elasticsearch investigation planner.
-Given a natural-language question, generate a JSON array of Elasticsearch queries to answer it.
-
-Rules:
-- Only use read-only operations: GET with _search, _count, _query, _cluster/health, _cat/*.
-- Available indices: web-logs-*, app-logs-*, training-app-pipeline-*, enriched-logs-*.
-- Available fields in web-logs-*: @timestamp, client_ip, method, path, status (integer), bytes (integer).
-- Available fields in app-logs-*/training-app-pipeline-*: @timestamp, level, service, message, user_id, order_id, amount, error, session_id, product_id, quantity.
-- Available fields in enriched-logs-*: @timestamp, user_id, action, status, user_info (array with name, department, location, email), enriched.
-- Return ONLY valid JSON. No markdown, no explanation.
-
-Output format:
-[
-  {"step": 1, "description": "...", "method": "GET", "path": "web-logs-*/_search", "body": {...}},
-  {"step": 2, "description": "...", "method": "GET", "path": "app-logs-*/_search", "body": {...}}
-]
-"""
-
-SUMMARIZER_PROMPT = """You are an incident investigation summarizer.
-Given the original question and query results, produce a structured summary.
-
-Output format:
-## Investigation Summary
-**Question**: <original question>
-**Findings**:
-1. <finding from query 1>
-2. <finding from query 2>
-...
-**Impact Assessment**: <scope and severity>
-**Likely Root Cause**: <based on evidence>
-**Recommended Next Step**: <specific action — but state that human approval is required>
-**Confidence**: <high/medium/low with explanation>
-"""
-
-
-def run_investigation(question):
-    """Run the full investigation pipeline."""
-    print(f"\n{'='*60}")
-    print(f"QUESTION: {question}")
-    print(f"{'='*60}")
-
-    # Step 1: Generate query plan
-    print("\n[Step 1] Generating query plan...")
-    plan_text = ask_llm(PLANNER_PROMPT, question)
-    print(f"Query plan:\n{plan_text}")
-
-    try:
-        query_plan = json.loads(plan_text)
-    except json.JSONDecodeError:
-        # Try to extract JSON from markdown code blocks
-        import re
-        json_match = re.search(r'\[.*\]', plan_text, re.DOTALL)
-        if json_match:
-            query_plan = json.loads(json_match.group())
-        else:
-            print("ERROR: Could not parse query plan as JSON")
-            return
-
-    # Step 2: Execute queries (read-only)
-    print(f"\n[Step 2] Executing {len(query_plan)} queries (read-only)...")
-    results = []
-    for step in query_plan:
-        desc = step.get("description", f"Step {step.get('step', '?')}")
-        method = step.get("method", "GET")
-        path = step.get("path", "")
-        body = step.get("body")
-
-        print(f"  Running: {desc}")
-        print(f"    {method} {path}")
-
-        result = es_request(method, path, body)
-
-        # Trim large results for the LLM context
-        result_str = json.dumps(result, indent=2)
-        if len(result_str) > 3000:
-            result_str = result_str[:3000] + "\n... (truncated)"
-
-        results.append({
-            "step": step.get("step"),
-            "description": desc,
-            "result": result_str
-        })
-
-    # Step 3: Summarize findings
-    print(f"\n[Step 3] Generating investigation summary...")
-    context = f"Original question: {question}\n\nQuery results:\n"
-    for r in results:
-        context += f"\n--- Step {r['step']}: {r['description']} ---\n{r['result']}\n"
-
-    summary = ask_llm(SUMMARIZER_PROMPT, context)
-    print(f"\n{'='*60}")
-    print("INVESTIGATION SUMMARY")
-    print(f"{'='*60}")
-    print(summary)
-
-    # Step 4: Human approval gate
-    print(f"\n{'='*60}")
-    print("HUMAN APPROVAL REQUIRED")
-    print("Review the summary above. The agent will NOT take any")
-    print("action without your explicit confirmation.")
-    print(f"{'='*60}")
-
-
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        question = " ".join(sys.argv[1:])
-    else:
-        question = input("Enter your investigation question: ")
-    run_investigation(question)
-AGENT
-```
-
-### Part D: Configure and Run the Agent
-
-6. Set environment variables
-
-```bash
-export ES_HOST="http://192.168.56.101:9200"
-export ES_API_KEY=""   # Leave empty if security is disabled; paste encoded key if enabled
-export LLM_API_KEY="<API key provided by instructor>"
-export LLM_MODEL="gpt-4o-mini"
-```
-
+> Replace `<CLUSTER_NODE1_IP>` with the cluster IP and `<LLM_API_KEY>` with the key from the instructor. If you omit the arguments, the script prompts for them.
+>
+> If `python3 -m venv` fails on CentOS: `sudo dnf install python3-pip python3-devel -y`, then re-run.
+>
 > **If no LLM API key is available**: The instructor will demonstrate this step live. You can still review the script to understand the architecture.
 
-7. Run the agent with the same question from Lab 4 (Alert Triage)
+Activate the environment:
 
 ```bash
-python elk_agent.py "An alert fired saying error count exceeded. Which service is failing, are users affected, and what should we do first?"
+cd ~/genai-agent && source .venv/bin/activate
 ```
 
-> **Expected output**: The agent generates a query plan (same pattern as Lab 4), executes the queries, and produces a structured summary. Compare the output with your manual Lab 4 results:
+<details>
+<summary><strong>Manual setup (if the script doesn't work on your environment)</strong></summary>
+
+```bash
+cd ~ && mkdir -p genai-agent && cd genai-agent
+python3 -m venv .venv && source .venv/bin/activate
+pip install openai requests python-dotenv
+cp ~/GH/hands-on/module-06/genai-agent/elk_agent.py .
+cat > .env << 'ENVFILE'
+ES_HOST=http://<CLUSTER_NODE1_IP>:9200
+ES_API_KEY=
+LLM_API_KEY=<paste your API key here>
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini
+ENVFILE
+python3 -c "import py_compile; py_compile.compile('elk_agent.py'); print('Syntax OK')"
+```
+
+</details>
+
+> **What the script contains** (review the source at `~/GH/hands-on/module-06/genai-agent/elk_agent.py`):
+> - `es_request()` — read-only Elasticsearch client with endpoint allowlist and blocked HTTP methods
+> - `ask_llm()` — OpenAI-compatible LLM wrapper (works with GPT-4o-mini, Azure OpenAI, or local models)
+> - `PLANNER_PROMPT` — system prompt that generates a JSON query plan from a natural-language question
+> - `SUMMARIZER_PROMPT` — system prompt that produces a structured investigation summary
+> - `_repair_json_array()` — robust JSON repair for malformed LLM output
+> - `run_investigation()` — three-step pipeline: Plan → Execute → Summarize, with error/data-gap detection and a human approval gate
+>
+> For the full annotated source, see: [`genai-agent/elk_agent.py`](../genai-agent/elk_agent.py)
+
+### Part C: Seed Data and Run the Agent
+
+5. Seed sample data (if needed)
+
+> The agent queries `web-logs-*`, `app-logs-*`, and `enriched-logs-*`. If `web-logs-*` or `app-logs-*` are empty or missing, run the seed script:
+
+```bash
+bash ~/GH/hands-on/module-06/genai-agent/seed-data.sh http://<CLUSTER_NODE1_IP>:9200
+```
+
+> This creates 12 `web-logs-*` documents and 10 `app-logs-*` documents via the `_bulk` API. The script is idempotent — it skips if data already exists. Expected result: `web-logs-*` → 12, `app-logs-*` → 10, `enriched-logs-*` → 28.
+>
+> **Alternative**: If you prefer Dev Tools, open [`genai-agent/seed-sample-data.md`](../genai-agent/seed-sample-data.md) and run the two `_bulk` requests manually.
+
+6. Run the agent with the same question from Lab 4 (Alert Triage)
+
+```bash
+python3 elk_agent.py "An alert fired saying error count exceeded. Which service is failing, are users affected, and what should we do first?"
+```
+
+> **Expected output**: The agent generates a query plan (querying `app-logs-*` for error distribution, `web-logs-*` for HTTP 5xx correlation, `enriched-logs-*` for user impact, and `_cluster/health`), executes the queries, and produces a structured investigation summary. With all three indices seeded, the agent should identify `checkout-service` as the failing service with `ConnectionTimeoutError`, correlate it with 500/503 responses on `/api/checkout`, and produce a high-confidence summary.
+>
+> Compare the output with your manual Lab 4 results:
 >
 > | Step | Lab 4 (Manual) | Lab 14 (Automated) |
 > |------|---------------|-------------------|
 > | Error distribution by service | You typed the query | Agent generated it |
 > | HTTP 5xx correlation | You typed the query | Agent generated it |
 > | Cluster health check | You typed the query | Agent generated it |
-> | Impact assessment | You typed the query | Agent generated it |
-> | Summary | You filled in the template | Agent produced it automatically |
+> | Impact assessment | You wrote the summary | Agent produced it automatically |
 
-8. Run the agent with the same question from Lab 11 Part B (ES|QL Investigation)
-
-```bash
-python elk_agent.py "Which services are producing the most errors and which endpoints are affected?"
-```
-
-> Compare the agent's output with your manual Lab 11 Part B results. The agent should follow a similar multi-step pattern: error concentration → endpoint correlation → evidence → impact scope.
-
-9. Run the agent with the same question from Lab 13 Part B (Cluster Diagnostics)
+7. Run the agent with the same question from Lab 11 Part B (ES|QL Investigation)
 
 ```bash
-python elk_agent.py "The cluster health alert is yellow. What is the root cause and what is the safe fix?"
+python3 elk_agent.py "Which services are producing the most errors and which endpoints are affected?"
 ```
 
-> The agent should query `_cluster/health`, `_cat/shards`, and `_cluster/allocation/explain` — the same APIs you used manually in Lab 13 Part B.
+> The agent uses Query DSL (`_search` API) rather than ES|QL syntax, but answers the same questions: error concentration → endpoint correlation → evidence → impact scope. With seeded data, it should identify `checkout-service` (5 errors) and `auth-service` (1 error), plus the `/api/checkout` path from `web-logs-*`.
 
-### Part E: Understanding the Agent Architecture
+8. Run the agent with the same question from Lab 13 (Cluster Diagnostics)
 
-10. Review the three-layer design
+```bash
+python3 elk_agent.py "The cluster health alert is yellow. What is the root cause and what is the safe fix?"
+```
+
+> The agent should query `_cluster/health`, `_cat/shards`, and `_cluster/allocation/explain` — the same APIs you used manually in Lab 13. Since the cluster is currently green (you cleaned up the test index), the agent should report "cluster is green" with high confidence.
+
+### Part D: Understanding the Agent Architecture
+
+9. Review the three-layer design
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -718,9 +708,11 @@ python elk_agent.py "The cluster health alert is yellow. What is the root cause 
 │                                                        │
 │  ┌──────────────────────────────────────────────────┐ │
 │  │              GUARDRAILS (Always Active)            │ │
-│  │  • Read-only API key (no write access)            │ │
+│  │  • Read-only API key (when security is enabled)    │ │
 │  │  • Endpoint allowlist (only _search, _cat, etc.)  │ │
 │  │  • Blocked HTTP methods (PUT, DELETE, PATCH)      │ │
+│  │  • HTTP error detection (4xx/5xx → flagged)       │ │
+│  │  • Data gap detection (0-shard → flagged)         │ │
 │  │  • Human approval gate (no auto-remediation)      │ │
 │  └──────────────────────────────────────────────────┘ │
 │                                                        │
@@ -731,28 +723,56 @@ python elk_agent.py "The cluster health alert is yellow. What is the root cause 
 └──────────────────────────────────────────────────────┘
 ```
 
-11. Review the guardrails in the code
+10. Review the guardrails in the code
 
-Open the script and identify the four safety layers:
+Open the script and identify the safety layers:
 
 ```bash
-grep -n "BLOCKED\|ALLOWED\|Blocked\|approval" elk_agent.py
+grep -n "BLOCKED\|ALLOWED\|Blocked\|approval\|query_errors\|data_gaps" elk_agent.py
 ```
 
 > **Why guardrails matter**:
 > - Without endpoint restrictions, the LLM might generate `DELETE /web-logs-*` or `PUT /_cluster/settings`
-> - Without the API key restriction, the agent has full cluster access
+> - Without an API key restriction (in a secured cluster), the agent would have full cluster access
+> - Without error/gap detection, the agent silently sends failed query results to the LLM, which produces nonsensical summaries
 > - Without human approval, a wrong recommendation executes automatically
 > - These are not optional — they are mandatory in any production GenAI + Elasticsearch integration
 
-### How Labs 4, 11, and 13 connect to this lab
+### How the earlier labs connect to this lab
 
 | Manual Lab | What you learned | What the agent automates |
 |-----------|-----------------|------------------------|
-| **Lab 4** (Alert Triage) | 4-query investigation chain: errors → HTTP correlation → cluster health → impact | Planner generates the same 4 queries from a natural-language alert description |
-| **Lab 11 Part B** (ES\|QL Investigation) | 5-step ES\|QL investigation: error concentration → endpoints → evidence → scope → summary | Planner generates equivalent ES\|QL or Query DSL from a vague incident question |
-| **Lab 13 Part B** (Cluster Diagnostics) | 6-step cluster diagnostic: health → shards → allocation explain → classify → fix → verify | Planner generates cluster API queries from a health alert trigger |
+| **Lab 4** (Alert Triage) | Multi-query investigation: errors → HTTP correlation → cluster health → impact | Planner generates the same queries from a natural-language alert description |
+| **Lab 11 Part B** (ES\|QL Investigation) | Multi-step ES\|QL investigation: error concentration → endpoints → evidence → scope | Planner generates equivalent Query DSL from a vague incident question |
+| **Lab 13 Parts A & B** (Cluster Diagnostics) | Systematic cluster diagnostic: health → shards → allocation explain → classify → fix → verify | Planner generates cluster API queries from a health alert trigger |
 
 > The manual labs teach the investigation **logic**. This lab wraps that same logic in an automated pipeline. If you cannot produce the manual summary, the agent's output will not make sense to you either.
 
-That's Lab 14. You now have a working read-only investigation agent, understand its three-layer design, and can verify its output against your manual workflows from Labs 4, 11, and 13.
+---
+
+## Cleanup & Teardown
+
+After completing all three labs, clean up the resources:
+
+```bash
+# Remove the genai-agent working directory (course repo copy stays intact)
+deactivate 2>/dev/null
+rm -rf ~/genai-agent
+```
+
+Clean up any remaining test indices (in Dev Tools):
+
+```json
+DELETE training-diag-test-<YOUR_INITIALS>
+```
+
+> If you seeded sample data in Lab 14 Step 5 and want to clean it up:
+> ```json
+> DELETE web-logs-2026.03.07
+> DELETE app-logs-2026.03.07
+> ```
+> Only delete these if the data was created during this lab. If `web-logs-*` and `app-logs-*` were populated from Module 02, leave them intact.
+
+> The `genai-agent/` folder in the course repository (`~/GH/hands-on/module-06/genai-agent/`) should be preserved — it is referenced by Module 07's capstone Lab 5.
+
+That completes Labs 12–14. You've progressed from observability concepts and hands-on log correlation, through systematic cluster troubleshooting with real failure simulation, to building and running an automated GenAI investigation agent with production-grade guardrails.

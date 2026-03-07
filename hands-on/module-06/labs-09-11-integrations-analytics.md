@@ -210,6 +210,8 @@ sudo /usr/share/logstash/bin/logstash-plugin list | grep jdbc_streaming
 > index => "%{[index_prefix]}-%{+YYYY.MM.dd}"
 > ```
 > So `jdbc-enrichment.conf` only needs input + filter + stdout output. The ES indexing happens automatically through `elk-training.conf`'s output when we set `index_prefix => "enriched-logs"`.
+>
+> **Single-pipeline guard**: Because all `.conf` files share one pipeline, events from Filebeat (beats input in `elk-training.conf`) would also flow through this filter. We use `@metadata[pipeline]` to tag events from our file input and wrap the entire filter in a conditional so it only applies to those events — not to Filebeat traffic.
 
 ```bash
 sudo tee /etc/logstash/conf.d/jdbc-enrichment.conf > /dev/null << 'EOF'
@@ -219,47 +221,55 @@ input {
     start_position => "beginning"
     sincedb_path => "/dev/null"  # Always read from start for testing
     codec => json
+    add_field => { "[@metadata][pipeline]" => "jdbc-enrichment" }
   }
 }
 
 filter {
-  # JDBC Streaming lookup to enrich user data
-  jdbc_streaming {
-    jdbc_driver_library => "/opt/logstash/drivers/sqlite-jdbc-3.45.0.0.jar"
-    jdbc_driver_class => "org.sqlite.JDBC"
-    jdbc_connection_string => "jdbc:sqlite:/opt/logstash/data/users.db"
-    jdbc_user => ""  # SQLite doesn't require user/password for file database
-    jdbc_password => ""
-    statement => "SELECT name, department, location, email FROM users WHERE user_id = :uid"
-    parameters => { "uid" => "user_id" }
-    target => "user_info"
+  # Only process events from this config's file input.
+  # Without this guard, Filebeat events from elk-training.conf
+  # would also hit the jdbc_streaming filter and pick up a second
+  # index_prefix value, producing an invalid index name.
+  if [@metadata][pipeline] == "jdbc-enrichment" {
 
-    # Performance tuning - cache results to reduce database queries
-    cache_size => 1000
-    cache_expiration => 300  # Cache entries expire after 300 seconds (5 minutes)
-  }
+    # JDBC Streaming lookup to enrich user data
+    jdbc_streaming {
+      jdbc_driver_library => "/opt/logstash/drivers/sqlite-jdbc-3.45.0.0.jar"
+      jdbc_driver_class => "org.sqlite.JDBC"
+      jdbc_connection_string => "jdbc:sqlite:/opt/logstash/data/users.db"
+      jdbc_user => ""  # SQLite doesn't require user/password for file database
+      jdbc_password => ""
+      statement => "SELECT name, department, location, email FROM users WHERE user_id = :uid"
+      parameters => { "uid" => "user_id" }
+      target => "user_info"
 
-  # Check for JDBC connection/query failures first
-  if "_jdbcstreamingfailure" in [tags] {
-    mutate {
-      add_field => { "enriched" => "false" }
-      add_tag => ["jdbc_lookup_failed"]
-      add_field => { "index_prefix" => "enriched-logs" }
+      # Performance tuning - cache results to reduce database queries
+      cache_size => 1000
+      cache_expiration => 300  # Cache entries expire after 300 seconds (5 minutes)
     }
-  }
-  # Successful lookup — user_info array has at least one result with a name field
-  else if [user_info] and [user_info][0] and [user_info][0][name] {
-    mutate {
-      add_field => { "enriched" => "true" }
-      add_field => { "index_prefix" => "enriched-logs" }
+
+    # Check for JDBC connection/query failures first
+    if "_jdbcstreamingfailure" in [tags] {
+      mutate {
+        add_field => { "enriched" => "false" }
+        add_tag => ["jdbc_lookup_failed"]
+        add_field => { "index_prefix" => "enriched-logs" }
+      }
     }
-  }
-  # User not found in database (user_info is [] or fields are empty)
-  else {
-    mutate {
-      add_field => { "enriched" => "false" }
-      add_tag => ["unknown_user"]
-      add_field => { "index_prefix" => "enriched-logs" }
+    # Successful lookup — user_info array has at least one result with a name field
+    else if [user_info] and [user_info][0] and [user_info][0][name] {
+      mutate {
+        add_field => { "enriched" => "true" }
+        add_field => { "index_prefix" => "enriched-logs" }
+      }
+    }
+    # User not found in database (user_info is [] or fields are empty)
+    else {
+      mutate {
+        add_field => { "enriched" => "false" }
+        add_tag => ["unknown_user"]
+        add_field => { "index_prefix" => "enriched-logs" }
+      }
     }
   }
 }
@@ -267,7 +277,9 @@ filter {
 # elk-training.conf already defines the Elasticsearch output using %{[index_prefix]}.
 # Keep only stdout here to avoid duplicate indexing when conf.d files are merged.
 output {
-  stdout { codec => rubydebug }
+  if [@metadata][pipeline] == "jdbc-enrichment" {
+    stdout { codec => rubydebug }
+  }
 }
 EOF
 ```
@@ -483,7 +495,34 @@ That wraps up Lab 9. You've walked through Kafka architecture, hands-on JDBC enr
 └──────────────────┘
 ```
 
-> **Prerequisite**: Lab 7 (Security) must be completed — Fleet requires authentication.
+> **Prerequisite**: Fleet requires **three things**:
+> 1. `xpack.security.enabled: true` in `elasticsearch.yml` — complete Lab 7 (Security) in [labs-05-08-scale-security.md](./labs-05-08-scale-security.md) first
+> 2. A configured superuser (e.g., `elastic` with a known password)
+> 3. `xpack.encryptedSavedObjects.encryptionKey` set in `kibana.yml` — Fleet stores API keys as encrypted saved objects
+>
+> Without security, Kibana returns `403 Forbidden: Kibana security must be enabled to use Fleet`.
+> Without the encryption key, Kibana returns `Unable to initialize Fleet: Agent binary source needs encrypted saved object API key to be set`.
+
+**Set up the encryption key** (if not already done in Lab 7):
+
+```bash
+# Generate a random 32-character encryption key
+ENCRYPTION_KEY=$(openssl rand -base64 24)
+echo "Encryption key: $ENCRYPTION_KEY"
+
+# Add to kibana.yml
+echo "xpack.encryptedSavedObjects.encryptionKey: \"$ENCRYPTION_KEY\"" | sudo tee -a /etc/kibana/kibana.yml
+
+# Restart Kibana to pick up the new setting
+sudo systemctl restart kibana
+```
+
+> Wait 30–60 seconds for Kibana to restart, then verify it is running:
+> ```bash
+> sudo systemctl status kibana
+> curl -s -o /dev/null -w "%{http_code}" http://192.168.56.101:5601/api/status
+> ```
+> Expected: HTTP `200`.
 
 1. Enable Fleet in Kibana
 
@@ -491,16 +530,18 @@ That wraps up Lab 9. You've walked through Kafka architecture, hands-on JDBC enr
 Menu (☰) → Management → Fleet
 ```
 
-> First-time setup: Kibana prompts you to configure Fleet Server. Follow the on-screen setup wizard.
+> First-time setup: Kibana prompts you to configure Fleet Server. Follow the on-screen setup wizard. If you see a security or encryption error, verify both `xpack.security.enabled: true` in `elasticsearch.yml` and `xpack.encryptedSavedObjects.encryptionKey` in `kibana.yml`.
 
 2. Add Fleet Server (if not already configured)
 
 > Fleet Server is a special Elastic Agent instance that coordinates all other agents. In training, we run it on the same host as Elasticsearch.
 
 ```
-Fleet → Settings → Add Fleet Server
-Host URL: https://127.0.0.1:8220
+Fleet → Settings → Fleet Server hosts → Add host
+Host URL: https://192.168.56.101:8220
 ```
+
+> Use the VM's network address (`192.168.56.101`) rather than `127.0.0.1` — this matches the Elasticsearch `network.host` binding and allows agents on other hosts to reach Fleet Server.
 
 > **Important**: The Fleet UI generates **two different commands**:
 > - **Fleet Server installation command** — installs the Fleet Server itself
@@ -530,10 +571,10 @@ cd elastic-agent-${ES_VERSION}-linux-x86_64
 > The enrollment command is generated by Kibana's Fleet UI. **Go to Fleet UI now** and copy the exact command shown — it contains the Fleet Server URL and enrollment token.
 
 ```bash
-sudo ./elastic-agent install --url=<FLEET_SERVER_URL> --enrollment-token=<TOKEN>
+sudo ./elastic-agent install --url=https://192.168.56.101:8220 --enrollment-token=<TOKEN> --insecure
 ```
 
-> The Fleet Server will start automatically after installation. Wait 10-20 seconds before enrolling additional agents.
+> The `--insecure` flag skips TLS verification (acceptable for training; use proper certificates in production). The Fleet Server will start automatically after installation. Wait 10-20 seconds before enrolling additional agents.
 
 4. Verify agent enrollment
 
