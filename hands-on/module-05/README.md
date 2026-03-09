@@ -287,17 +287,9 @@ sudo systemctl enable --now metricbeat
    *   Menu (☰) → **Stack Management** → **Rules**.
    *   **Create rule**.
    *   Name: `High Error Rate`.
-   *   Type: **Index threshold**.
-   *   Index: `training-app-pipeline-*`.
-   *   **Condition**:
-       *   WHEN `count`
-       *   OF `level.keyword: ERROR` (Use KQL)
-       *   IS ABOVE `0` (For testing: alert on ANY error).
-       *   FOR THE LAST `5 minutes`.
 
 3. **Action**
    *   Add Action → Select `Server Log Output`.
-   *   Message: `ALERT: Errors detected in application logs!`.
 
 4. **Test**
    *   Wait 1 minute.
